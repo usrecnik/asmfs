@@ -20,7 +20,7 @@ $ cargo build
 $ . oraenv
 ORACLE_SID = [+ASM] ? +ASM
 
-$ RUST_LOG=info ./asmfs /opt/asmfs_mnt/
+$ RUST_LOG=info ./asmfs /mnt/asmfs/
 ```
 
 ## Warning!
