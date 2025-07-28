@@ -6,6 +6,8 @@ A read-only FUSE filesystem that exposes **raw** Oracle ASM files using internal
 
 ![Experimental](https://img.shields.io/badge/status-experimental-orange)
 
+( This project is experimental, not well-tested, and still under development. )
+
 ## Compile
 
 ```
