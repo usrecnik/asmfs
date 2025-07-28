@@ -1,3 +1,5 @@
+![asmfs demo](https://raw.githubusercontent.com/usrecnik/open-asmfs/master/docs/asmfs-demo.png)
+
 # OpenASMFS
 
 A read-only FUSE filesystem that exposes **raw** Oracle ASM files using internal APIs.
