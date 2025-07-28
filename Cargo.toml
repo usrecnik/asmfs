@@ -1,0 +1,13 @@
+[package]
+name = "asmfs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+oracle = "0.6.3"
+fuser = "0.15.1"
+clap = "4.5.41"
+libc = "0.2.174"
+env_logger = "0.11.8"
+log = "0.4.27"
+chrono = "0.4"
