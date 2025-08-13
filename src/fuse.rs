@@ -26,18 +26,19 @@ impl OpenFileHandle {
 
 pub struct AsmFS {
     ora: OracleConnection,
+    connection_string: Option<String>,
     mount_point: String,
     handles: HashMap<u64, OpenFileHandle> // see open() and close()
 }
 
 impl AsmFS {
-    pub fn new(mut mount_point: String) -> Self {
+    pub fn new(mut mount_point: String, connection_string: Option<String>) -> Self {
         if !mount_point.ends_with("/") {
             mount_point.push('/');
         }
 
         info!("Connecting to oracle...");
-        let ora = match OracleConnection::connect() {
+        let ora = match OracleConnection::connect(connection_string.clone()) {
             Ok(ora) => ora,
             Err(e) => {
                 error!("Unable to connect to oracle: {}", e);
@@ -45,7 +46,7 @@ impl AsmFS {
             }
         };
 
-        AsmFS { ora, mount_point, handles: HashMap::new() }
+        AsmFS { ora, connection_string, mount_point, handles: HashMap::new() }
     }
 }
 
@@ -174,7 +175,7 @@ impl Filesystem for AsmFS {
         info!("open(ino={})", ino);
 
         // each call to open() establishes new connection
-        let conn = match OracleConnection::connect() {
+        let conn = match OracleConnection::connect(self.connection_string.clone()) {
             Ok(ora) => ora,
             Err(e) => {
                 error!("open() failed establishing new connection: {}", e);

@@ -117,13 +117,39 @@ impl AsmAlias {
 
 impl OracleConnection {
 
-    pub fn connect() -> Result<Self, Error> {
-        let conn = Connector::new("", "", "")
-            .external_auth(true)
-            .privilege(Privilege::Sysdba)
-            .connect()?;
+    pub fn connect(conn_str: Option<String>) -> Result<Self, Error> {
+        if conn_str.is_none() {
+            let conn = Connector::new("", "", "")
+                .external_auth(true)
+                .privilege(Privilege::Sysasm)
+                .connect()?;
 
-        Ok(Self{conn})
+            return Ok(Self{conn});
+        } else {
+            let str = conn_str.unwrap();
+
+            let (user, pass, inst) = match str.split_once('@') {
+                Some((user_pass, after_at)) => {
+                    match user_pass.split_once('/') {
+                        Some((u, p)) => (u, p, after_at),
+                        None => {
+                            eprintln!("Invalid format: missing '/' in user/pass");
+                            std::process::exit(1);
+                        }
+                    }
+                },
+                None => {
+                    eprintln!("Invalid format: missing '@'");
+                    std::process::exit(1);
+                }
+            };
+
+            let conn = Connector::new(user, pass, inst)
+                .privilege(Privilege::Sysdba)
+                .connect()?;
+
+            return Ok(Self{conn});
+        }
     }
 
     fn select_diskgroup_all(&self) -> Result<ResultSet<Row>, Error> {

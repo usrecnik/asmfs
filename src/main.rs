@@ -19,6 +19,13 @@ fn main() {
                 .help("Act as a client, and mount FUSE at given path"),
         )
         .arg(
+            Arg::new("conn")
+                .long("conn")
+                .value_name("CONNECTION_STRING")
+                .help("Connection string for the database or service - user/pass@host:port/service (user must have sysdba)")
+                .action(ArgAction::Set),
+        )
+        .arg(
             Arg::new("auto-unmount")
                 .long("auto-unmount")
                 .action(ArgAction::SetTrue)
@@ -32,6 +39,7 @@ fn main() {
         )
         .get_matches();
 
+    let connection_string = matches.get_one::<String>("conn");
     let mountpoint = matches.get_one::<String>("MOUNT_POINT").unwrap();
     let mut options = vec![MountOption::RO, MountOption::FSName("asmfs".to_string())];
     if matches.get_flag("auto-unmount") {
@@ -41,5 +49,5 @@ fn main() {
         options.push(MountOption::AllowRoot);
     }
     
-    fuser::mount2(AsmFS::new(mountpoint.clone()), mountpoint, &options).unwrap();
+    fuser::mount2(AsmFS::new(mountpoint.clone(), connection_string.cloned()), mountpoint, &options).unwrap();
 }
