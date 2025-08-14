@@ -152,7 +152,7 @@ impl OracleConnection {
         }
     }
 
-    fn select_diskgroup_all(&self) -> Result<ResultSet<'_, Row>, Error> {
+    fn select_diskgroup_all(&self) -> Result<ResultSet<Row>, Error> {
         let query = r#"
             select group_number, '+' || name as name from v$asm_diskgroup order by name
         "#;
@@ -166,7 +166,7 @@ impl OracleConnection {
         self.conn.query_row(query, &[&group_name])
     }
 
-    fn select_alias_by_parent_index(&self, parent_index: u32) -> Result<ResultSet<'_, Row>, Error> {
+    fn select_alias_by_parent_index(&self, parent_index: u32) -> Result<ResultSet<Row>, Error> {
         let query = format!(r#"
             select {}
                 from v$asm_alias a
