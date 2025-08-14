@@ -436,7 +436,13 @@ impl OracleConnection {
 
         println!(".. requested_blocks={}", requested_blocks);
 
-        let read_step_blocks = (24*1024) / block_size;
+        let read_step_blocks =
+            if offset_in_blocks == 0 {
+                1 // when reading header block, we can only read one block at a time
+            } else {
+                (24 * 1024) / block_size
+            };
+
         println!(".. read_step_blocks={}", read_step_blocks);
         let mut buffer: Vec<u8> = Vec::with_capacity(requsted_bytes as usize);
 
