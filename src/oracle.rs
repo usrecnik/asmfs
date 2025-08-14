@@ -152,7 +152,7 @@ impl OracleConnection {
         }
     }
 
-    fn select_diskgroup_all(&self) -> Result<ResultSet<Row>, Error> {
+    fn select_diskgroup_all(&self) -> Result<ResultSet<'_, Row>, Error> {
         let query = r#"
             select group_number, '+' || name as name from v$asm_diskgroup order by name
         "#;
@@ -166,7 +166,7 @@ impl OracleConnection {
         self.conn.query_row(query, &[&group_name])
     }
 
-    fn select_alias_by_parent_index(&self, parent_index: u32) -> Result<ResultSet<Row>, Error> {
+    fn select_alias_by_parent_index(&self, parent_index: u32) -> Result<ResultSet<'_, Row>, Error> {
         let query = format!(r#"
             select {}
                 from v$asm_alias a
@@ -403,7 +403,7 @@ impl OracleConnection {
 
         let size_in_blocks :i64 = (size_in_bytes / block_size as u64) as i64;
         let offset_in_blocks :i64 = offset_in_bytes / block_size as i64;
-        println!(".. size_in_blocks = {}, offset_in_blocks={}", size_in_blocks, offset_in_blocks);
+        println!(".. size_in_blocks = {}, offset_in_blocks={}, size_in_bytes={}", size_in_blocks, offset_in_blocks, size_in_bytes);
         if offset_in_blocks > size_in_blocks {
             println!(".. **offset in blocks bigger than file size in blocks, returning empty buffer");
             return Ok(Vec::<u8>::new());
