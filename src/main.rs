@@ -1,7 +1,6 @@
 mod oracle;
 mod fuse;
 mod inode;
-mod fcopy;
 
 use clap::{Arg, ArgAction, Command};
 use fuser::MountOption;

@@ -5,7 +5,7 @@ use oracle::sql_type::{OracleType, Timestamp};
 use chrono::{NaiveDate, DateTime, Utc};
 use crate::inode;
 use inode::Inode;
-use log::{debug, error}; // debug, info, error
+use log::{debug, error, info}; // debug, info, error
 
 //use log::{info}; // debug, error
 
@@ -152,7 +152,7 @@ impl OracleConnection {
         }
     }
 
-    fn select_diskgroup_all(&self) -> Result<ResultSet<Row>, Error> {
+    fn select_diskgroup_all(&self) -> Result<ResultSet<'_,Row>, Error> {
         let query = r#"
             select group_number, '+' || name as name from v$asm_diskgroup order by name
         "#;
@@ -166,7 +166,7 @@ impl OracleConnection {
         self.conn.query_row(query, &[&group_name])
     }
 
-    fn select_alias_by_parent_index(&self, parent_index: u32) -> Result<ResultSet<Row>, Error> {
+    fn select_alias_by_parent_index(&self, parent_index: u32) -> Result<ResultSet<'_,Row>, Error> {
         let query = format!(r#"
             select {}
                 from v$asm_alias a
@@ -320,16 +320,38 @@ impl OracleConnection {
         Ok(target_name)
     }
 
-    pub fn proc_open(&self, ino: u64) -> Result<(u64, u32, u64, u32), Error> {
-        let target_path = self.query_asm_alias_link(ino)?;
-
+    pub fn proc_getfilettr(&self, target_path: &String) -> Result<(u32, u64, u32), Error> {
         let mut stmt = self.conn.statement("begin dbms_diskgroup.getfileattr(:b_target, :b_filetype, :b_filesize, :b_blksize); end;").build()?;
-        stmt.execute(&[&target_path, &OracleType::Int64, &OracleType::Int64, &OracleType::Int64])?;
+        stmt.execute(&[target_path, &OracleType::Int64, &OracleType::Int64, &OracleType::Int64])?;
         let filetype: u32 = stmt.bind_value(2)?;
         let filesize: u64 = stmt.bind_value(3)?;
         let blksize: u32 = stmt.bind_value(4)?; // logical block size
-
         debug!(".. dbms_diskgroup.getfileattr(): target={}, filetype={}, filesize={}, blksize={}", target_path, filetype, filesize, blksize);
+
+        Ok((filetype, filesize, blksize))
+    }
+
+    pub fn _proc_copy(&self, src_fname: String, src_filetype: u32, src_blksize: u32, src_filesize: u64, dst_fname: String) -> Result<(), Error> {
+        let sql = "begin dbms_diskgroup.copy('', '', '', :src_path, :src_ftyp, :src_blksz, :src_fsiz, '', '', '', :dst_path, 1, 0, 0, 0, '', ''); end;";
+        let mut stmt = self.conn.statement(sql).build()?;
+
+        info!("Calling dbms_diskgroup.copy now...");
+        stmt.execute(&[
+            &src_fname,
+            &src_filetype,
+            &src_blksize,
+            &src_filesize,
+            &dst_fname
+        ])?;
+        info!("Calling dbms_diskgroup.copy completed.");
+
+        Ok(())
+    }
+
+    pub fn proc_open(&self, ino: u64) -> Result<(u64, u32, u64, u32), Error> {
+        let target_path = self.query_asm_alias_link(ino)?;
+
+        let (filetype, filesize, blksize) = self.proc_getfilettr(&target_path)?;
 
         let mut stmt = self.conn.statement("begin dbms_diskgroup.open(:b_target, :b_mode, :b_filetype, :b_blksize, :b_handle, :b_pblksize, :b_filesize); end;").build()?;
         stmt.execute(&[&target_path, &"r", &filetype, &blksize, &OracleType::Int64, &OracleType::Int64, &filesize])?;

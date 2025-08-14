@@ -3,6 +3,14 @@ name = "asmfs"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "asmfs"
+path = "src/main.rs"
+
+[[bin]]
+name = "asmfs_fcopy"
+path = "src/fcopy.rs"
+
 [dependencies]
 oracle = "0.6.3"
 fuser = "0.15.1"
