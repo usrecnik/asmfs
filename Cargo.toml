@@ -3,14 +3,6 @@ name = "asmfs"
 version = "0.1.0"
 edition = "2024"
 
-[[bin]]
-name = "asmfs"
-path = "src/main.rs"
-
-[[bin]]
-name = "asmfs_fcopy"
-path = "src/fcopy.rs"
-
 [dependencies]
 oracle = "0.6.3"
 fuser = "0.15.1"
@@ -19,5 +11,3 @@ libc = "0.2.174"
 env_logger = "0.11.8"
 log = "0.4.27"
 chrono = "0.4"
-nix = "0.30.1"
-rlimit = "0.10.2"
