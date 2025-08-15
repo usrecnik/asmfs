@@ -22,7 +22,7 @@ fn main() {
             Arg::new("conn")
                 .long("conn")
                 .value_name("CONNECTION_STRING")
-                .help("Connection string for the database or service - user/pass@host:port/service (user must have sysdba)")
+                .help("Connection string to remote ASM instance - user/pass@host:port/service (user must have sysdba)")
                 .action(ArgAction::Set),
         )
         .arg(
