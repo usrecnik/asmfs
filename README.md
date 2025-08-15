@@ -1,5 +1,3 @@
-![asmfs demo](https://raw.githubusercontent.com/usrecnik/open-asmfs/master/docs/asmfs-demo.png)
-
 # ASMFS
 
 A read-only FUSE filesystem that exposes **raw** Oracle ASM files.
@@ -56,4 +54,9 @@ to copy files to local filesystem.
 This project is **experimental**, not well-tested, and still under development.
 
 **Contributions are welcome!** Ideas, issues, and pull requests are appreciated.
+
+## Screenshot (demo)
+
+![asmfs demo](https://github.com/usrecnik/asmfs/blob/main/doc/asmfs_screenshot.png?raw=true)
+
 
