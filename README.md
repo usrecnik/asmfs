@@ -14,13 +14,36 @@ A read-only FUSE filesystem that exposes **raw** Oracle ASM files.
 $ cargo build
 ```
 
-## Usage
+## Help
+
+```
+$ ./asmfs -help
+Usage: asmfs [OPTIONS] <MOUNT_POINT>
+
+Arguments:
+  <MOUNT_POINT>  Act as a client, and mount FUSE at given path
+
+Options:
+      --conn <CONNECTION_STRING>  Connection string to remote ASM instance - user/pass@host:port/service (user must have sysdba)
+      --auto-unmount              Automatically unmount on process exit
+      --allow-root                Allow root user to access filesystem
+  -h, --help                      Print help
+  -V, --version                   Print version
+```
+
+## Local Example
 
 ```
 $ . oraenv
 ORACLE_SID = [+ASM] ? +ASM
 
-$ RUST_LOG=info ./asmfs /mnt/asmfs/
+$ ./asmfs /mnt/asmfs/
+```
+
+## Remote Example
+
+```
+$ ./asmfs --conn user/pass@hostname:1521/+ASM /mnt/asmfs/
 ```
 
 ## Warning!
