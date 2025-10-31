@@ -329,7 +329,13 @@ impl OracleConnection {
         let blksize: u32 = stmt.bind_value(4)?; // logical block size
         debug!(".. dbms_diskgroup.getfileattr(): target={}, filetype={}, filesize={}, blksize={}", target_path, filetype, filesize, blksize);
 
-        Ok((filetype, filesize, blksize))
+        if filetype == FILE_TYPE_ARCHIVELOG {
+            let filesize = filesize + (blksize as u64);
+            debug!(".... filesize raised for one block to {} to accommodate the trailer", filesize);
+            Ok((filetype, filesize, blksize))
+        } else {
+            Ok((filetype, filesize, blksize))
+        }
     }
 
     pub fn _proc_copy(&self, src_fname: String, src_filetype: u32, src_blksize: u32, src_filesize: u64, dst_fname: String) -> Result<(), Error> {
@@ -405,36 +411,41 @@ impl OracleConnection {
         Ok(buffer)
     }
 
-    pub fn proc_read(&self, fh: u64, offset_in_bytes: i64, mut requsted_bytes: u32, block_size: u32, size_in_bytes: u64, file_type: u32) -> Result<Vec<u8>, Error> {
+    pub fn proc_read(&self, fh: u64, offset_in_bytes: i64, mut requested_bytes: u32, block_size: u32, size_in_bytes: u64, file_type: u32) -> Result<Vec<u8>, Error> {
 
         // some files seem to start at index zero, and some seem to start with the first block being 1 instead of 0.
         let fix: i64 = match file_type {
             13 => 1, // spfile
             _ => 0 // (2 => datafile), careful, the first block is two bytes different than asmcmd cp; code is not tested with fix=1
         };
-        println!("offset fix is {}", fix);
+        println!(".. offset fix is {}", fix);
 
         if block_size >= 32*1024 {
             error!("Reading files with 32k block size is not supported. Returning empty buffer!");
             return Ok(Vec::<u8>::new());
         }
 
-        if requsted_bytes as u64 > size_in_bytes {  // if file size is, say 3K and requested length is 4K, we can only really request 3K.
-            requsted_bytes = size_in_bytes as u32;
-            debug!(".. proc_read, length was > than bytes_size, thus lowered to {}", requsted_bytes);
+        if requested_bytes as u64 > size_in_bytes {  // if file size is, say 3K and requested length is 4K, we can only really request 3K.
+            requested_bytes = size_in_bytes as u32;
+            debug!(".. proc_read, length was > than bytes_size, thus lowered to {}", requested_bytes);
         }
 
-        let size_in_blocks :i64 = (size_in_bytes / block_size as u64) as i64;
+        let size_in_blocks :i64 = (size_in_bytes / block_size as u64) as i64; // includes trailer block (e.g. for archivelog)
+        let size_in_blocks_raw :i64; // does *NOT* include trailer block (e.g. for archivelog)
+        if file_type == FILE_TYPE_ARCHIVELOG {
+            size_in_blocks_raw = size_in_blocks - 1;
+        } else {
+            size_in_blocks_raw = size_in_blocks;
+        }
+
         let offset_in_blocks :i64 = offset_in_bytes / block_size as i64;
-        println!(".. size_in_blocks={}, offset_in_blocks={}, size_in_bytes={}, file_type={}", size_in_blocks, offset_in_blocks, size_in_bytes, file_type);
+        println!(".. size_in_blocks={}, size_in_blocks_raw={}, offset_in_blocks={}, size_in_bytes={}, file_type={}", size_in_blocks, size_in_blocks_raw, offset_in_blocks, size_in_bytes, file_type);
         if offset_in_blocks > size_in_blocks {
             println!(".. **offset in blocks bigger than file size in blocks, returning empty buffer");
             return Ok(Vec::<u8>::new());
         }
 
-        let requested_blocks = (requsted_bytes as i64 + block_size as i64 - 1) / block_size as i64;  // number of blocks to read
-        //let read_all_bytes = requested_blocks as u32 * block_size;   // number of bytes, according to number of blocks
-
+        let requested_blocks = (requested_bytes as i64 + block_size as i64 - 1) / block_size as i64;  // number of blocks to read
         println!(".. requested_blocks={}", requested_blocks);
 
         let read_step_blocks =
@@ -445,41 +456,51 @@ impl OracleConnection {
             };
 
         println!(".. read_step_blocks={}", read_step_blocks);
-        let mut buffer: Vec<u8> = Vec::with_capacity(requsted_bytes as usize);
+        let mut buffer: Vec<u8> = Vec::with_capacity(requested_bytes as usize);
 
-        // we can read at most 24K at a time (RAW(32767) which is one byte less than 32K is the limit)
-        let mut alredy_read_blocks = 0;
+        // we can read at most 24K at a time (RAW(32767) which is one byte less than 32K, which is the limit)
+        let mut already_read_blocks = 0;
 
         for i in (offset_in_blocks .. offset_in_blocks + (requested_blocks-fix)).step_by(read_step_blocks as usize) {
             let offset_in_blocks = i + fix;
             let mut amount_in_blocks = read_step_blocks;
-            if alredy_read_blocks + read_step_blocks > requested_blocks as u32 {
-                amount_in_blocks = (alredy_read_blocks + read_step_blocks) - requested_blocks as u32 - 1; // -1 because blocks are zero-based (not fix)
-                println!(".... amount_in_blocks reduced to {} ((already_read_blocks={} + read_step_blocks={}) - requested_blocks={})", amount_in_blocks, alredy_read_blocks, read_step_blocks, requested_blocks);
+
+            if already_read_blocks + read_step_blocks > requested_blocks as u32 {
+                amount_in_blocks = (already_read_blocks + read_step_blocks) - requested_blocks as u32 - 1; // -1 because blocks are zero-based (not fix)
+                println!(".... amount_in_blocks reduced to {} ((already_read_blocks={} + read_step_blocks={}) - requested_blocks={})", amount_in_blocks, already_read_blocks, read_step_blocks, requested_blocks);
             }
 
-            if offset_in_blocks + amount_in_blocks as i64 > size_in_blocks+1 { // +1, because file_size=640 and we need to (can) read block 640.
-               amount_in_blocks = (size_in_blocks - (offset_in_blocks - fix)) as u32;
+            if offset_in_blocks + amount_in_blocks as i64 >= size_in_blocks_raw { // >= because if file_size=640 then we need to (can) read block 640.
+                amount_in_blocks = (size_in_blocks - (offset_in_blocks - fix)) as u32;
                 println!(".... amount_in_blocks={} (size_in_blocks={} - (offset_in_blocks={} - fix={}))", amount_in_blocks, size_in_blocks, offset_in_blocks, fix);
             }
 
-            let tmp_vec = self.proc_read_int(fh, block_size, offset_in_blocks, amount_in_blocks)?;
-
-            alredy_read_blocks += amount_in_blocks;
+            let tmp_vec :Vec<u8> = self.proc_read_int(fh, block_size, offset_in_blocks, amount_in_blocks)?;
+            already_read_blocks += amount_in_blocks;
 
             buffer.extend(tmp_vec);
+        }
+
+        // add trailer block (e.g. for archivelog)
+        if file_type == FILE_TYPE_ARCHIVELOG {
+            println!("### this is archivelog, already_read_blocks={}, requested_blocks={}, a<b={}", already_read_blocks, requested_blocks, already_read_blocks < requested_blocks as u32);
+            if already_read_blocks < requested_blocks as u32 {
+                println!("### offset_in_blocks={} + already_read_blocks={} = {} ==?== size_in_blocks_raw={}", offset_in_blocks, already_read_blocks, offset_in_blocks+already_read_blocks as i64, size_in_blocks_raw);
+                if offset_in_blocks + already_read_blocks as i64 == size_in_blocks_raw {
+                    println!("### adding trailer block ***********************************");
+                    let trail_vec :Vec<u8> = vec![0xFE; 512];
+                    buffer.extend(trail_vec);
+                }
+            }
         }
 
         // convert headers to local filesystem
         if (offset_in_blocks == 0) && (file_type == FILE_TYPE_ARCHIVELOG) {
             self.fix_header_block_archivelog(&mut buffer)?;
-        } else {
-            println!(".. **** no header block to fix (offset_in_blocks={}, file_type={})", offset_in_blocks, file_type);
         }
-        // end
 
-        println!(".. done, read {} blocks (=already_read_blocks).", alredy_read_blocks);
-        buffer.truncate(requsted_bytes as usize);
+        println!(".. done, read {} blocks (=already_read_blocks).", already_read_blocks);
+        buffer.truncate(requested_bytes as usize);
 
         Ok(buffer)
     }
