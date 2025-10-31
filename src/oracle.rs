@@ -1,5 +1,5 @@
 use std::time::{SystemTime, UNIX_EPOCH};
-use oracle::{Connection, Connector, Error, Privilege, Row, ResultSet};
+use oracle::{Connection, Connector, Error, ErrorKind, Privilege, Row, ResultSet};
 use fuser::{FileType, FileAttr};
 use oracle::sql_type::{OracleType, Timestamp};
 use chrono::{NaiveDate, DateTime, Utc};
@@ -15,6 +15,7 @@ pub struct OracleConnection {
 
 const ASM_ALIAS_COLUMNS: &str = "a.reference_index, a.alias_index, a.file_number, a.name, a.alias_directory, a.system_created";
 const ASM_FILE_COLUMNS: &str = "f.bytes, f.blocks, f.creation_date, f.modification_date";
+const FILE_TYPE_ARCHIVELOG: u32 = 4;
 
 struct AsmAlias {
     reference_index: u32,                   // v$asm_alias.reference_index (contains group_number in high-order 8 bits), use get_inode.get_group_number
@@ -470,9 +471,10 @@ impl OracleConnection {
         }
 
         // convert headers to local filesystem
-        if (offset_in_blocks == 0) && (file_type == 13) {
-            // @todo: convert headers to local filesystem
-            println!(".. converting headers to local filesystem!");
+        if (offset_in_blocks == 0) && (file_type == FILE_TYPE_ARCHIVELOG) {
+            self.fix_header_block_archivelog(&mut buffer)?;
+        } else {
+            println!(".. **** no header block to fix (offset_in_blocks={}, file_type={})", offset_in_blocks, file_type);
         }
         // end
 
@@ -480,6 +482,31 @@ impl OracleConnection {
         buffer.truncate(requsted_bytes as usize);
 
         Ok(buffer)
+    }
+
+    fn fix_header_block_archivelog(&self, buffer: &mut Vec<u8>) -> Result<(), Error> {
+        println!(".. fix_header_block_archivelog begin");
+
+        if buffer.len() < 512 {
+            return Err(Error::new(ErrorKind::Other, "asmfs; archivelog header buffer is less than 512 bytes"));
+        }
+
+        // Fix checksum at 0x10 -> 0x14
+        const MAGIC_XOR: u32 = 0x0000_81a0;
+
+        let checksum_bytes: [u8; 4] = buffer[0x10..0x14]
+            .try_into()
+            .map_err(|_| Error::new(ErrorKind::Other, "Failed to read checksum 0x10 -> 0x14"))?;
+
+        let checksum = u32::from_le_bytes(checksum_bytes) ^ MAGIC_XOR;
+        buffer[0x10..0x14].copy_from_slice(&checksum.to_le_bytes());
+
+        // Fix metadata at offset 0x20 -> 0x24
+        buffer[0x20..0x24].copy_from_slice(&MAGIC_XOR.to_le_bytes());
+
+        println!(".. fix_header_block_archivelog end");
+
+        Ok(())
     }
 
 }
