@@ -49,5 +49,13 @@ fn main() {
         options.push(MountOption::AllowRoot);
     }
     
-    fuser::mount2(AsmFS::new(mountpoint.clone(), connection_string.cloned()), mountpoint, &options).unwrap();
+    match fuser::mount2(AsmFS::new(mountpoint.clone(), connection_string.cloned()), mountpoint, &options) {
+        Ok(_) => {},
+        Err(e) => {
+            eprintln!("Failed to mount FUSE filesystem: {:?}", e);
+            eprintln!("Error kind: {:?}", e.kind());
+            eprintln!("OS error code: {:?}", e.raw_os_error());
+            std::process::exit(1);
+        }
+    }
 }

@@ -406,10 +406,10 @@ impl OracleConnection {
 
     pub fn proc_read(&self, fh: u64, offset_in_bytes: i64, mut requsted_bytes: u32, block_size: u32, size_in_bytes: u64, file_type: u32) -> Result<Vec<u8>, Error> {
 
-        // some files seems to start at zero-index and some seems to start with first block being 1 instead of 0.
+        // some files seem to start at index zero, and some seem to start with the first block being 1 instead of 0.
         let fix: i64 = match file_type {
             13 => 1, // spfile
-            _ => 0 // (2 => datafile), careful, first block is two bytes different than asmcmd cp; code is not tested with fix=1
+            _ => 0 // (2 => datafile), careful, the first block is two bytes different than asmcmd cp; code is not tested with fix=1
         };
         println!("offset fix is {}", fix);
 
@@ -425,7 +425,7 @@ impl OracleConnection {
 
         let size_in_blocks :i64 = (size_in_bytes / block_size as u64) as i64;
         let offset_in_blocks :i64 = offset_in_bytes / block_size as i64;
-        println!(".. size_in_blocks = {}, offset_in_blocks={}, size_in_bytes={}", size_in_blocks, offset_in_blocks, size_in_bytes);
+        println!(".. size_in_blocks={}, offset_in_blocks={}, size_in_bytes={}, file_type={}", size_in_blocks, offset_in_blocks, size_in_bytes, file_type);
         if offset_in_blocks > size_in_blocks {
             println!(".. **offset in blocks bigger than file size in blocks, returning empty buffer");
             return Ok(Vec::<u8>::new());
@@ -468,6 +468,13 @@ impl OracleConnection {
 
             buffer.extend(tmp_vec);
         }
+
+        // convert headers to local filesystem
+        if (offset_in_blocks == 0) && (file_type == 13) {
+            // @todo: convert headers to local filesystem
+            println!(".. converting headers to local filesystem!");
+        }
+        // end
 
         println!(".. done, read {} blocks (=already_read_blocks).", alredy_read_blocks);
         buffer.truncate(requsted_bytes as usize);
