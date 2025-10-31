@@ -285,6 +285,7 @@ impl OracleConnection {
         let row = self.select_alias_file_by_parent_index_and_name(parent_inode.get_reference_index(), name)?;
 
         let alias = AsmAlias::from_row_file(&row)?;
+        // @todo: if archivelog add +1 to blocks (filesize) for trailer block
         Ok(alias.get_file_attr())
     }
 
@@ -321,7 +322,8 @@ impl OracleConnection {
         Ok(target_name)
     }
 
-    pub fn proc_getfilettr(&self, target_path: &String) -> Result<(u32, u64, u32), Error> {
+    // filetype, filesize_ora, filesize_fs, blksize
+    pub fn proc_getfilettr(&self, target_path: &String) -> Result<(u32, u64, u64, u32), Error> {
         let mut stmt = self.conn.statement("begin dbms_diskgroup.getfileattr(:b_target, :b_filetype, :b_filesize, :b_blksize); end;").build()?;
         stmt.execute(&[target_path, &OracleType::Int64, &OracleType::Int64, &OracleType::Int64])?;
         let filetype: u32 = stmt.bind_value(2)?;
@@ -330,11 +332,11 @@ impl OracleConnection {
         debug!(".. dbms_diskgroup.getfileattr(): target={}, filetype={}, filesize={}, blksize={}", target_path, filetype, filesize, blksize);
 
         if filetype == FILE_TYPE_ARCHIVELOG {
-            let filesize = filesize + (blksize as u64);
-            debug!(".... filesize raised for one block to {} to accommodate the trailer", filesize);
-            Ok((filetype, filesize, blksize))
+            let filesize_fs = filesize + (blksize as u64);
+            debug!(".... filesize_fs raised for one block to {} to accommodate the trailer", filesize);
+            Ok((filetype, filesize, filesize_fs, blksize))
         } else {
-            Ok((filetype, filesize, blksize))
+            Ok((filetype, filesize, filesize, blksize))
         }
     }
 
@@ -358,7 +360,7 @@ impl OracleConnection {
     pub fn proc_open(&self, ino: u64) -> Result<(u64, u32, u64, u32), Error> {
         let target_path = self.query_asm_alias_link(ino)?;
 
-        let (filetype, filesize, blksize) = self.proc_getfilettr(&target_path)?;
+        let (filetype, filesize, _filesize_fs, blksize) = self.proc_getfilettr(&target_path)?;
 
         let mut stmt = self.conn.statement("begin dbms_diskgroup.open(:b_target, :b_mode, :b_filetype, :b_blksize, :b_handle, :b_pblksize, :b_filesize); end;").build()?;
         stmt.execute(&[&target_path, &"r", &filetype, &blksize, &OracleType::Int64, &OracleType::Int64, &filesize])?;
@@ -431,6 +433,7 @@ impl OracleConnection {
         }
 
         let size_in_blocks :i64 = (size_in_bytes / block_size as u64) as i64; // includes trailer block (e.g. for archivelog)
+        println!(".. size_in_blocks={} (size_in_bytes={} / block_size={})", size_in_blocks, size_in_bytes, block_size);
         let size_in_blocks_raw :i64; // does *NOT* include trailer block (e.g. for archivelog)
         if file_type == FILE_TYPE_ARCHIVELOG {
             size_in_blocks_raw = size_in_blocks - 1;
@@ -466,13 +469,15 @@ impl OracleConnection {
             let mut amount_in_blocks = read_step_blocks;
 
             if already_read_blocks + read_step_blocks > requested_blocks as u32 {
-                amount_in_blocks = (already_read_blocks + read_step_blocks) - requested_blocks as u32 - 1; // -1 because blocks are zero-based (not fix)
-                println!(".... amount_in_blocks reduced to {} ((already_read_blocks={} + read_step_blocks={}) - requested_blocks={})", amount_in_blocks, already_read_blocks, read_step_blocks, requested_blocks);
+                //amount_in_blocks = (already_read_blocks + read_step_blocks) - requested_blocks as u32 - 1; // -1 because blocks are zero-based (not fix)
+                // println!(".... amount_in_blocks reduced to {} ((already_read_blocks={} + read_step_blocks={}) - requested_blocks={})", amount_in_blocks, already_read_blocks, read_step_blocks, requested_blocks);
+                amount_in_blocks = requested_blocks as u32 - already_read_blocks;
+                println!(".... a) amount_in_blocks={} (requested_blocks={} - already_read_blocks={})", amount_in_blocks, requested_blocks, already_read_blocks);
             }
 
             if offset_in_blocks + amount_in_blocks as i64 >= size_in_blocks_raw { // >= because if file_size=640 then we need to (can) read block 640.
                 amount_in_blocks = (size_in_blocks - (offset_in_blocks - fix)) as u32;
-                println!(".... amount_in_blocks={} (size_in_blocks={} - (offset_in_blocks={} - fix={}))", amount_in_blocks, size_in_blocks, offset_in_blocks, fix);
+                println!(".... b) amount_in_blocks={} (size_in_blocks={} - (offset_in_blocks={} - fix={}))", amount_in_blocks, size_in_blocks, offset_in_blocks, fix);
             }
 
             let tmp_vec :Vec<u8> = self.proc_read_int(fh, block_size, offset_in_blocks, amount_in_blocks)?;
