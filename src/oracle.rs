@@ -285,7 +285,7 @@ impl OracleConnection {
         let row = self.select_alias_file_by_parent_index_and_name(parent_inode.get_reference_index(), name)?;
 
         let alias = AsmAlias::from_row_file(&row)?;
-        // @todo: if archivelog add +1 to blocks (filesize) for trailer block
+        // @todo: if archivelog add +1 to blocks (filesize) for trailer block, see v$asm_file.type
         Ok(alias.get_file_attr())
     }
 
