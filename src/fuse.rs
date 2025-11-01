@@ -14,13 +14,17 @@ const TTL: Duration = Duration::from_secs(60); // 1 minute
 struct OpenFileHandle {
     conn: OracleConnection,
     block_size: u32,
-    file_size: u64, // in number of blocks
+    blocks_asm: u64,
+    blocks_fs: u64,
     file_type: u32
 }
 
 impl OpenFileHandle {
-    pub fn bytes_size(&self) -> u64 {
-        self.block_size as u64 * self.file_size
+    pub fn bytes_size_fs(&self) -> u64 {
+        self.block_size as u64 * self.blocks_fs
+    }
+    pub fn bytes_size_asm(&self) -> u64 {
+        self.block_size as u64 * self.blocks_asm
     }
 }
 
@@ -189,8 +193,9 @@ impl Filesystem for AsmFS {
                 let handle = OpenFileHandle {
                     conn,
                     block_size: data.1,
-                    file_size: data.2,
-                    file_type: data.3
+                    blocks_asm: data.2,
+                    blocks_fs: data.3,
+                    file_type: data.4
                 };
 
                 self.handles.insert(data.0, handle);
@@ -225,7 +230,7 @@ impl Filesystem for AsmFS {
         info!("read(ino={}, _fh={}, offset={}, _size={}, flags={})", ino, fh, offset, size, _flags);
         let handle = self.handles.get(&fh).unwrap();
         
-        match handle.conn.proc_read(fh, offset, size, handle.block_size, handle.bytes_size(), handle.file_type) {
+        match handle.conn.proc_read(fh, offset, size, handle.block_size, handle.bytes_size_fs(), handle.bytes_size_asm(), handle.file_type) {
             Ok(buffer) => {
                 reply.data(buffer.as_slice());
                 debug!(".. read() ok, offset={}, size={}", offset, size);
