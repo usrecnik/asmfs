@@ -1,6 +1,7 @@
 mod oracle;
 mod fuse;
 mod inode;
+mod trail_arch;
 
 use clap::{Arg, ArgAction, Command};
 use fuser::MountOption;
