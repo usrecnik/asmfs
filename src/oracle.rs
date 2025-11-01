@@ -501,6 +501,7 @@ impl OracleConnection {
                     println!("... generating trailer block (offset_in_blocks={} + already_read_blocks={} = {} ==?== size_in_blocks_fs={})",  offset_in_blocks, already_read_blocks, offset_in_blocks+already_read_blocks as i64, size_in_blocks_fs);
                     let trail_vec :Vec<u8> = vec![0xFE; 512];
                     buffer.extend(trail_vec);
+                    already_read_blocks += 1;
                 }
             }
         }
