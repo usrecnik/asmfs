@@ -1,7 +1,6 @@
 mod oracle;
 mod fuse;
 mod inode;
-mod trail_arch;
 mod afd;
 
 use clap::{Arg, ArgAction, Command};
@@ -57,6 +56,7 @@ fn main() {
     let mountpoint = matches.get_one::<String>("MOUNT_POINT").unwrap();
     let use_raw = !matches.get_flag("no-raw");
     let mirror = matches.get_one::<u8>("mirror").unwrap_or(&0);
+    let mirror = *mirror;
 
     let mut options = vec![MountOption::RO, MountOption::FSName("asmfs".to_string())];
     if matches.get_flag("auto-unmount") {

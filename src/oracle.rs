@@ -3,9 +3,13 @@ use oracle::{Connection, Connector, Error, ErrorKind, Privilege, Row, ResultSet}
 use fuser::{FileType, FileAttr};
 use oracle::sql_type::{OracleType, Timestamp};
 use chrono::{NaiveDate, DateTime, Utc};
+use std::collections::HashMap;
+
 use crate::inode;
 use inode::Inode;
+use crate::afd::get_afd_map;
 use log::{debug, error, info}; // debug, info, error
+
 
 //use log::{info}; // debug, error
 
@@ -19,8 +23,10 @@ const FILE_TYPE_ARCHIVELOG_INT: u32 = 4;
 const FILE_TYPE_ARCHIVELOG_STR: &str = "ARCHIVELOG"; // as in v$asm_file.type
 
 pub struct RawOpenFileHandle {
-    au_list: Vec<(u16, u32)>, // file_number, allocation_unit
-    au_size: u32
+    pub(crate) au_list: Vec<(u16, u32)>, // disk_number, allocation_unit
+    pub(crate) au_size: u32,
+    pub(crate) file_size_bytes: u64,
+    pub(crate) disk_list: HashMap<u16, String> // disk_number => path (e.g. /dev/sdc)
 }
 
 struct AsmAlias {
@@ -244,6 +250,31 @@ impl OracleConnection {
         self.conn.query_row(query, &[&group_number])
     }
 
+    fn select_asm_disks(&self, group_number: u8) -> Result<ResultSet<'_,Row>, Error> {
+        let query = r#"
+            select disk_number, path from v$asm_disk where group_number = :1
+        "#;
+
+        self.conn.query(query, &[&group_number])
+    }
+
+    pub fn query_asm_disks(&self, group_number: u8) -> Result<HashMap<u16, String>, Error> {
+        let rs = self.select_asm_disks(group_number)?;
+        let mut retval :HashMap<u16, String> = HashMap::new();
+        for r in rs {
+            let row = r?;
+            let disk_number :u16 = row.get(0)?;
+            let mut path :String = row.get(1)?;
+
+            if path.starts_with("AFD:") {
+                path = get_afd_map().get(&path).expect("Expected 'afdtool -getdevlist' to have value for all AFD disks in v$asm_disk").clone();
+            }
+
+            retval.insert(disk_number, path);
+        }
+        Ok(retval)
+    }
+
     pub fn query_extent_map(&self, group_number: u8, file_number: u32, mirror: u8) -> Result<Vec<(u16, u32)>, Error> {
         let rs = self.select_extent_map(group_number, file_number, mirror)?;
         let mut retval :Vec<(u16, u32)> = Vec::new();
@@ -437,13 +468,16 @@ impl OracleConnection {
         let inode :Inode = Inode::from_ino(ino);
         let row = self.select_alias_file_by_reference_index_and_alias_index(inode.get_reference_index(), inode.get_alias_index())?;
         let file_number :u32 = row.get("FILE_NUMBER")?;
+        let file_size_bytes = row.get("BYTES")?;
         let group_number = inode._get_group_number();
 
         let au_list = self.query_extent_map(group_number, file_number, mirror)?;
         let au_size = self.query_au_size(group_number)?;
 
+        let disk_list = self.query_asm_disks(group_number)?;
+
         let retval = RawOpenFileHandle {
-            au_list, au_size
+            au_list, au_size, file_size_bytes, disk_list
         };
 
         Ok(retval)

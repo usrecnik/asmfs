@@ -1,8 +1,10 @@
 use fuser::{FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, Request};
-use libc::{ENOENT}; /* ENOSYS */
+use libc::{ENOENT}; /* ENOSYS, EINVAL */
 use std::ffi::OsStr;
 use std::collections::HashMap;
 use std::time::{Duration, UNIX_EPOCH};
+use std::fs::File;
+use std::io::{self, Read, Seek, SeekFrom};
 use log::{debug, info, error}; // debug
 use crate::oracle::{OracleConnection, RawOpenFileHandle};
 use oracle::{Error};
@@ -207,17 +209,10 @@ impl Filesystem for AsmFS {
 
     fn read(&mut self, _req: &Request, ino: u64, fh: u64, offset: i64, size: u32, _flags: i32, _lock: Option<u64>, reply: ReplyData) {
         info!("read(ino={}, _fh={}, offset={}, _size={}, flags={})", ino, fh, offset, size, _flags);
-        let handle = self.handles.get(&fh).unwrap();
-        
-        match handle.conn.proc_read(fh, offset, size, handle.block_size, handle.bytes_size_fs(), handle.bytes_size_asm(), handle.file_type) {
-            Ok(buffer) => {
-                reply.data(buffer.as_slice());
-                debug!(".. read() ok, offset={}, size={}", offset, size);
-            },
-            Err(e) => {
-                error!("read() failed: {}", e);
-                reply.error(ENOENT);
-            }
+        if self.use_raw {
+            self.read_raw(_req, ino, fh, offset, size, _flags, _lock, reply);
+        } else {
+            self.read_dbms(_req, ino, fh, offset, size, _flags, _lock, reply);
         }
     }
 }
@@ -285,9 +280,80 @@ impl AsmFS {
         self.handles.remove(&fh);
     }
 
-    fn release_raw(&mut self, _req: &Request<'_>, _ino: u64, fh: u64, _flags: i32, _lock_owner: Option<u64>, _flush: bool, reply: ReplyEmpty) {
+    fn release_raw(&mut self, _req: &Request<'_>, _ino: u64, _fh: u64, _flags: i32, _lock_owner: Option<u64>, _flush: bool, reply: ReplyEmpty) {
         self.handles_raw.remove(&_ino);
+        reply.ok();
         debug!(".. release() ok");
     }
-    
+
+    fn read_dbms(&mut self, _req: &Request, _ino: u64, fh: u64, offset: i64, size: u32, _flags: i32, _lock: Option<u64>, reply: ReplyData) {
+        let handle = self.handles.get(&fh).unwrap();
+
+        match handle.conn.proc_read(fh, offset, size, handle.block_size, handle.bytes_size_fs(), handle.bytes_size_asm(), handle.file_type) {
+            Ok(buffer) => {
+                reply.data(buffer.as_slice());
+                debug!(".. read() ok, offset={}, size={}", offset, size);
+            },
+            Err(e) => {
+                error!("read() failed: {}", e);
+                reply.error(ENOENT);
+            }
+        }
+    }
+
+    fn read_raw(&mut self, _req: &Request, _ino: u64, fh: u64, offset: i64, size: u32, _flags: i32, _lock: Option<u64>, reply: ReplyData) {
+        let handle = self.handles_raw.get(&fh).unwrap();
+
+        if offset as u64 + size as u64 > handle.file_size_bytes {
+            // @todo: we should reduce size if possible, not throw an error. This is for testing for now...
+            error!("read_raw() offset+size exceeds file size: offset={}, size={}, file_size={}", offset, size, handle.file_size_bytes);
+            reply.error(ENOENT);
+            return;
+        }
+
+        let au_first = offset / handle.au_size as i64;
+        let au_last = au_first + (size as i64 / handle.au_size as i64);
+
+        let mut buffer :Vec<u8> = Vec::with_capacity(size as usize);
+
+        let mut bytes_read :usize = 0;
+        for au_index in au_first .. au_last {
+            let first_byte :u32 = if au_index == au_first {
+                offset as u32 % handle.au_size
+            } else {
+                0
+            };
+
+            let last_byte = if size - (bytes_read as u32) < handle.au_size {
+                size - bytes_read as u32
+            } else {
+                handle.au_size
+            };
+
+            let au_entry = handle.au_list[au_index as usize];
+            let block_device = handle.disk_list.get(&au_entry.0).unwrap();
+
+            let au_buf = read_raw_int(block_device, handle.au_size, au_entry.1, first_byte, last_byte).expect("read_raw_int() failed");
+
+            bytes_read = bytes_read + au_buf.len();
+            buffer.extend(au_buf)
+        }
+
+        reply.data(buffer.as_slice());
+        debug!(".. read_raw() ok, offset={}, size={}", offset, size);
+    }
+}
+
+fn read_raw_int(block_device: &str, au_size: u32, allocation_unit: u32, first_byte: u32, last_byte: u32) -> io::Result<Vec<u8>>
+{
+    let offset = (allocation_unit as u64 * au_size as u64) + first_byte as u64;
+    let length = (last_byte - first_byte + 1) as usize;
+
+    let mut file = File::open(block_device)?;
+    file.seek(SeekFrom::Start(offset))?;
+
+    let mut buffer = vec![0u8; length];
+    file.read_exact(&mut buffer)?;
+
+    Ok(buffer)
 }
