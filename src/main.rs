@@ -2,6 +2,7 @@ mod oracle;
 mod fuse;
 mod inode;
 mod trail_arch;
+mod afd;
 
 use clap::{Arg, ArgAction, Command};
 use fuser::MountOption;
@@ -27,6 +28,18 @@ fn main() {
                 .action(ArgAction::Set),
         )
         .arg(
+            Arg::new("no-raw")
+                .long("no-raw")
+                .action(ArgAction::SetTrue)
+                .help("Use DBMS_DISKGROUP.READ() instead of raw device access")
+        )
+        .arg(
+            Arg::new("mirror")
+                .long("mirror")
+                .default_value("0")
+                .help("0=>primary copy, 1=>first redundant copy, 2=>second redundant copy"),
+        )
+        .arg(
             Arg::new("auto-unmount")
                 .long("auto-unmount")
                 .action(ArgAction::SetTrue)
@@ -42,6 +55,9 @@ fn main() {
 
     let connection_string = matches.get_one::<String>("conn");
     let mountpoint = matches.get_one::<String>("MOUNT_POINT").unwrap();
+    let use_raw = !matches.get_flag("no-raw");
+    let mirror = matches.get_one::<u8>("mirror").unwrap_or(&0);
+
     let mut options = vec![MountOption::RO, MountOption::FSName("asmfs".to_string())];
     if matches.get_flag("auto-unmount") {
         options.push(MountOption::AutoUnmount);
@@ -50,7 +66,7 @@ fn main() {
         options.push(MountOption::AllowRoot);
     }
     
-    match fuser::mount2(AsmFS::new(mountpoint.clone(), connection_string.cloned()), mountpoint, &options) {
+    match fuser::mount2(AsmFS::new(mountpoint.clone(), connection_string.cloned(), use_raw, mirror), mountpoint, &options) {
         Ok(_) => {},
         Err(e) => {
             eprintln!("Failed to mount FUSE filesystem: {:?}", e);

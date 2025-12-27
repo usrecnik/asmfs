@@ -4,7 +4,7 @@ use std::ffi::OsStr;
 use std::collections::HashMap;
 use std::time::{Duration, UNIX_EPOCH};
 use log::{debug, info, error}; // debug
-use crate::oracle::OracleConnection;
+use crate::oracle::{OracleConnection, RawOpenFileHandle};
 use oracle::{Error};
 
 
@@ -32,11 +32,14 @@ pub struct AsmFS {
     ora: OracleConnection,
     connection_string: Option<String>,
     mount_point: String,
-    handles: HashMap<u64, OpenFileHandle> // see open() and close()
+    handles: HashMap<u64, OpenFileHandle>, // see open() and close()
+    handles_raw: HashMap<u64, RawOpenFileHandle>,
+    use_raw: bool,
+    mirror: u8
 }
 
 impl AsmFS {
-    pub fn new(mut mount_point: String, connection_string: Option<String>) -> Self {
+    pub fn new(mut mount_point: String, connection_string: Option<String>, use_raw: bool, mirror: u8) -> Self {
         if !mount_point.ends_with("/") {
             mount_point.push('/');
         }
@@ -50,7 +53,14 @@ impl AsmFS {
             }
         };
 
-        AsmFS { ora, connection_string, mount_point, handles: HashMap::new() }
+        AsmFS {
+            ora,
+            connection_string,
+            mount_point,
+            handles: HashMap::new(),
+            handles_raw: HashMap::new(),
+            use_raw,
+            mirror }
     }
 }
 
@@ -178,6 +188,42 @@ impl Filesystem for AsmFS {
     fn open(&mut self, _req: &Request<'_>, ino: u64, _flags: i32, reply: ReplyOpen) {
         info!("open(ino={})", ino);
 
+        if self.use_raw {
+            self.open_raw(_req, ino, _flags, reply);
+        } else {
+            self.open_dbms(_req, ino, _flags, reply);
+        }
+    }
+
+    fn release(&mut self, _req: &Request<'_>, _ino: u64, fh: u64, _flags: i32, _lock_owner: Option<u64>, _flush: bool, reply: ReplyEmpty) {
+        info!("release(fh={})", fh);
+
+        if self.use_raw {
+            self.release_raw(_req, _ino, fh, _flags, _lock_owner, _flush, reply);
+        } else {
+            self.release_dbms(_req, _ino, fh, _flags, _lock_owner, _flush, reply);
+        }
+    }
+
+    fn read(&mut self, _req: &Request, ino: u64, fh: u64, offset: i64, size: u32, _flags: i32, _lock: Option<u64>, reply: ReplyData) {
+        info!("read(ino={}, _fh={}, offset={}, _size={}, flags={})", ino, fh, offset, size, _flags);
+        let handle = self.handles.get(&fh).unwrap();
+        
+        match handle.conn.proc_read(fh, offset, size, handle.block_size, handle.bytes_size_fs(), handle.bytes_size_asm(), handle.file_type) {
+            Ok(buffer) => {
+                reply.data(buffer.as_slice());
+                debug!(".. read() ok, offset={}, size={}", offset, size);
+            },
+            Err(e) => {
+                error!("read() failed: {}", e);
+                reply.error(ENOENT);
+            }
+        }
+    }
+}
+
+impl AsmFS {
+    fn open_dbms(&mut self, _req: &Request<'_>, ino: u64, _flags: i32, reply: ReplyOpen) {
         // each call to open() establishes new connection
         let conn = match OracleConnection::connect(self.connection_string.clone()) {
             Ok(ora) => ora,
@@ -210,9 +256,22 @@ impl Filesystem for AsmFS {
         }
     }
 
-    fn release(&mut self, _req: &Request<'_>, _ino: u64, fh: u64, _flags: i32, _lock_owner: Option<u64>, _flush: bool, reply: ReplyEmpty) {
-        info!("release(fh={})", fh);
+    fn open_raw(&mut self, _req: &Request<'_>, ino: u64, _flags: i32, reply: ReplyOpen) {
+        let h = self.ora.proc_open_raw(ino, self.mirror);
+        match h {
+            Ok(handle) => {
+                self.handles_raw.insert(ino, handle);
+                debug!(".. open() ok, fh={}", ino);
+                reply.opened(ino, 0);
+            },
+            Err(e) => {
+                error!(".. open() failed: {}", e);
+                reply.error(ENOENT)
+            }
+        }
+    }
 
+    fn release_dbms(&mut self, _req: &Request<'_>, _ino: u64, fh: u64, _flags: i32, _lock_owner: Option<u64>, _flush: bool, reply: ReplyEmpty) {
         let handle = self.handles.get(&fh).unwrap();
         match handle.conn.proc_close(fh) {
             Ok(()) => {
@@ -226,19 +285,9 @@ impl Filesystem for AsmFS {
         self.handles.remove(&fh);
     }
 
-    fn read(&mut self, _req: &Request, ino: u64, fh: u64, offset: i64, size: u32, _flags: i32, _lock: Option<u64>, reply: ReplyData) {
-        info!("read(ino={}, _fh={}, offset={}, _size={}, flags={})", ino, fh, offset, size, _flags);
-        let handle = self.handles.get(&fh).unwrap();
-        
-        match handle.conn.proc_read(fh, offset, size, handle.block_size, handle.bytes_size_fs(), handle.bytes_size_asm(), handle.file_type) {
-            Ok(buffer) => {
-                reply.data(buffer.as_slice());
-                debug!(".. read() ok, offset={}, size={}", offset, size);
-            },
-            Err(e) => {
-                error!("read() failed: {}", e);
-                reply.error(ENOENT);
-            }
-        }
+    fn release_raw(&mut self, _req: &Request<'_>, _ino: u64, fh: u64, _flags: i32, _lock_owner: Option<u64>, _flush: bool, reply: ReplyEmpty) {
+        self.handles_raw.remove(&_ino);
+        debug!(".. release() ok");
     }
+    
 }

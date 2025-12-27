@@ -18,6 +18,11 @@ const ASM_FILE_COLUMNS: &str = "f.bytes, f.blocks, f.creation_date, f.modificati
 const FILE_TYPE_ARCHIVELOG_INT: u32 = 4;
 const FILE_TYPE_ARCHIVELOG_STR: &str = "ARCHIVELOG"; // as in v$asm_file.type
 
+pub struct RawOpenFileHandle {
+    au_list: Vec<(u16, u32)>, // file_number, allocation_unit
+    au_size: u32
+}
+
 struct AsmAlias {
     reference_index: u32,                   // v$asm_alias.reference_index (contains group_number in high-order 8 bits), use get_inode.get_group_number
     alias_index: u32,                       // v$asm_alias.alias_index
@@ -216,6 +221,48 @@ impl OracleConnection {
         self.conn.query_row(query.as_str(), &[&reference_index, &alias_index])
     }
 
+    fn select_extent_map(&self, group_number: u8, file_number: u32, mirror: u8) -> Result<ResultSet<'_,Row>, Error> {
+        let query = r#"
+            SELECT
+                x.disk_kffxp AS disk_number,
+                x.au_kffxp AS allocation_unit,
+            FROM x$kffxp x
+            WHERE x.group_kffxp = :1
+                AND x.number_kffxp = :2
+                AND x.pxn_kffxp = :3
+            ORDER BY x.xnum_kffxp, x.au_kffxp
+        "#;
+
+        self.conn.query(query, &[&group_number, &file_number, &mirror])
+    }
+
+    fn select_au_size(&self, group_number: u8) -> Result<Row, Error> {
+        let query = r#"
+            select allocation_unit_size from v$asm_diskgroup where group_number = :1
+        "#;
+
+        self.conn.query_row(query, &[&group_number])
+    }
+
+    pub fn query_extent_map(&self, group_number: u8, file_number: u32, mirror: u8) -> Result<Vec<(u16, u32)>, Error> {
+        let rs = self.select_extent_map(group_number, file_number, mirror)?;
+        let mut retval :Vec<(u16, u32)> = Vec::new();
+        for r in rs {
+            let row = r?;
+            let disk_number :u16 = row.get(0)?;
+            let allocation_unit :u32 = row.get(1)?;
+
+            retval.push((disk_number, allocation_unit));
+        }
+        Ok(retval)
+    }
+
+    pub fn query_au_size(&self, group_number: u8) -> Result<u32, Error> {
+        let row = self.select_au_size(group_number)?;
+        let au_size :u32 = row.get(0)?;
+        Ok(au_size)
+    }
+
     pub fn query_asm_diskgroup_vec(&self) -> Result<Vec<(u64, FileType, String)>, Error> {
         let rs = self.select_diskgroup_all()?;
         let mut retval :Vec<(u64, FileType, String)> = Vec::new();
@@ -384,6 +431,22 @@ impl OracleConnection {
         debug!(".. dbms_diskgroup.open(): handle={}, pblksize={}, target={}, filetype={}, filesize_asm={}, filesize_fs={}, blksize={}", handle, _pblksize, target_path, filetype, filesize_asm, filesize_fs, blksize);
 
         Ok((handle, blksize, filesize_asm, filesize_fs, filetype))
+    }
+
+    pub fn proc_open_raw(&self, ino: u64, mirror: u8) -> Result<RawOpenFileHandle, Error> {
+        let inode :Inode = Inode::from_ino(ino);
+        let row = self.select_alias_file_by_reference_index_and_alias_index(inode.get_reference_index(), inode.get_alias_index())?;
+        let file_number :u32 = row.get("FILE_NUMBER")?;
+        let group_number = inode._get_group_number();
+
+        let au_list = self.query_extent_map(group_number, file_number, mirror)?;
+        let au_size = self.query_au_size(group_number)?;
+
+        let retval = RawOpenFileHandle {
+            au_list, au_size
+        };
+
+        Ok(retval)
     }
 
     pub fn proc_close(&self, fd: u64) -> Result<(), Error> {
