@@ -12,9 +12,7 @@ use oracle::{Error, ErrorKind};
 
 const TTL: Duration = Duration::from_secs(60); // 1 minute
 
-const FILE_TYPE_ARCHIVELOG_STR: &str = "ARCHIVELOG";
-const FILE_TYPE_DATAFILE_STR: &str = "DATAFILE";
-const FILE_TYPE_TEMPFILE_STR: &str = "TEMPFILE";
+const MAGIC_FILE_TYPES: &[&str] = &["ARCHIVELOG", "DATAFILE", "TEMPFILE", "CONTROLFILE"];
 
 struct OpenFileHandle {
     conn: OracleConnection,
@@ -356,8 +354,7 @@ impl AsmFS {
             buffer.extend(au_buf)
         }
 
-
-        if offset == 0 && au_first == 0 && (handle.file_type == FILE_TYPE_ARCHIVELOG_STR || handle.file_type == FILE_TYPE_DATAFILE_STR || handle.file_type == FILE_TYPE_TEMPFILE_STR) {
+        if offset == 0 && au_first == 0 && MAGIC_FILE_TYPES.contains(&handle.file_type.as_str()) {
             // this buffer contains the first block of the file
             match fix_header_block(&mut buffer) {
                 Ok(()) => {},
