@@ -13,6 +13,7 @@ use oracle::{Error, ErrorKind};
 const TTL: Duration = Duration::from_secs(60); // 1 minute
 
 const FILE_TYPE_ARCHIVELOG_STR: &str = "ARCHIVELOG";
+const FILE_TYPE_DATAFILE_STR: &str = "DATAFILE";
 
 struct OpenFileHandle {
     conn: OracleConnection,
@@ -355,9 +356,9 @@ impl AsmFS {
         }
 
 
-        if offset == 0 && au_first == 0 && handle.file_type == FILE_TYPE_ARCHIVELOG_STR {
+        if offset == 0 && au_first == 0 && (handle.file_type == FILE_TYPE_ARCHIVELOG_STR || handle.file_type == FILE_TYPE_DATAFILE_STR) {
             // this buffer contains the first block of the file
-            match fix_header_block_archivelog(&mut buffer) {
+            match fix_header_block(&mut buffer) {
                 Ok(()) => {},
                 Err(e) => {
                     error!(".. read_raw() failed to fix header block: {}", e);
@@ -388,7 +389,7 @@ fn read_raw_int(block_device: &str, au_size: u32, allocation_unit: u32, first_by
     Ok(buffer)
 }
 
-fn fix_header_block_archivelog(buffer: &mut Vec<u8>) -> Result<(), Error> {
+fn fix_header_block(buffer: &mut Vec<u8>) -> Result<(), Error> {
     println!(".. fix_header_block_archivelog begin");
 
     if buffer.len() < 512 {
