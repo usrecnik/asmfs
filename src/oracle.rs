@@ -25,6 +25,7 @@ pub struct RawOpenFileHandle {
     pub(crate) au_list: Vec<(u16, u32)>, // disk_number, allocation_unit
     pub(crate) au_size: u32,
     pub(crate) file_size_bytes: u64,
+    pub(crate) file_type: String, // as seen in v$asm_file.type
     pub(crate) disk_list: HashMap<u16, String> // disk_number => path (e.g. /dev/sdc)
 }
 
@@ -459,6 +460,7 @@ impl OracleConnection {
         let row = self.select_alias_file_by_reference_index_and_alias_index(inode.get_reference_index(), inode.get_alias_index())?;
         let file_number :u32 = row.get("FILE_NUMBER")?;
         let file_size_bytes = row.get("BYTES")?;
+        let file_type :String = row.get("TYPE")?;
         let group_number = inode._get_group_number();
 
         let au_list = self.query_extent_map(group_number, file_number, mirror)?;
@@ -466,7 +468,7 @@ impl OracleConnection {
 
         let disk_list = self.query_asm_disks(group_number)?;
         let retval = RawOpenFileHandle {
-            au_list, au_size, file_size_bytes, disk_list
+            au_list, au_size, file_size_bytes, file_type, disk_list
         };
 
         Ok(retval)

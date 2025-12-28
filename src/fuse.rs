@@ -7,11 +7,12 @@ use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use log::{debug, info, error}; // debug
 use crate::oracle::{OracleConnection, RawOpenFileHandle};
-use oracle::{Error};
+use oracle::{Error, ErrorKind};
 
 
 const TTL: Duration = Duration::from_secs(60); // 1 minute
 
+const FILE_TYPE_ARCHIVELOG_STR: &str = "ARCHIVELOG";
 
 struct OpenFileHandle {
     conn: OracleConnection,
@@ -353,6 +354,19 @@ impl AsmFS {
             buffer.extend(au_buf)
         }
 
+
+        if offset == 0 && au_first == 0 && handle.file_type == FILE_TYPE_ARCHIVELOG_STR {
+            // this buffer contains the first block of the file
+            match fix_header_block_archivelog(&mut buffer) {
+                Ok(()) => {},
+                Err(e) => {
+                    error!(".. read_raw() failed to fix header block: {}", e);
+                    reply.error(ENOENT);
+                    return;
+                }
+            }
+        }
+
         info!(".. read_raw() sending reply");
         reply.data(buffer.as_slice());
         info!(".. read_raw()");
@@ -372,4 +386,29 @@ fn read_raw_int(block_device: &str, au_size: u32, allocation_unit: u32, first_by
     file.read_exact(&mut buffer)?;
 
     Ok(buffer)
+}
+
+fn fix_header_block_archivelog(buffer: &mut Vec<u8>) -> Result<(), Error> {
+    println!(".. fix_header_block_archivelog begin");
+
+    if buffer.len() < 512 {
+        return Err(Error::new(ErrorKind::Other, "asmfs; archivelog header buffer is less than 512 bytes"));
+    }
+
+    // Fix checksum at 0x10 -> 0x14
+    const MAGIC_XOR: u32 = 0x0000_81a0;
+
+    let checksum_bytes: [u8; 4] = buffer[0x10..0x14]
+        .try_into()
+        .map_err(|_| Error::new(ErrorKind::Other, "Failed to read checksum 0x10 -> 0x14"))?;
+
+    let checksum = u32::from_le_bytes(checksum_bytes) ^ MAGIC_XOR;
+    buffer[0x10..0x14].copy_from_slice(&checksum.to_le_bytes());
+
+    // Fix metadata at offset 0x20 -> 0x24
+    buffer[0x20..0x24].copy_from_slice(&MAGIC_XOR.to_le_bytes());
+
+    println!(".. fix_header_block_archivelog end");
+
+    Ok(())
 }
