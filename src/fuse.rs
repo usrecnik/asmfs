@@ -14,6 +14,7 @@ const TTL: Duration = Duration::from_secs(60); // 1 minute
 
 const FILE_TYPE_ARCHIVELOG_STR: &str = "ARCHIVELOG";
 const FILE_TYPE_DATAFILE_STR: &str = "DATAFILE";
+const FILE_TYPE_TEMPFILE_STR: &str = "TEMPFILE";
 
 struct OpenFileHandle {
     conn: OracleConnection,
@@ -356,7 +357,7 @@ impl AsmFS {
         }
 
 
-        if offset == 0 && au_first == 0 && (handle.file_type == FILE_TYPE_ARCHIVELOG_STR || handle.file_type == FILE_TYPE_DATAFILE_STR) {
+        if offset == 0 && au_first == 0 && (handle.file_type == FILE_TYPE_ARCHIVELOG_STR || handle.file_type == FILE_TYPE_DATAFILE_STR || handle.file_type == FILE_TYPE_TEMPFILE_STR) {
             // this buffer contains the first block of the file
             match fix_header_block(&mut buffer) {
                 Ok(()) => {},
