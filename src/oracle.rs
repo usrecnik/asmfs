@@ -20,7 +20,6 @@ pub struct OracleConnection {
 const ASM_ALIAS_COLUMNS: &str = "a.reference_index, a.alias_index, a.file_number, a.name, a.alias_directory, a.system_created";
 const ASM_FILE_COLUMNS: &str = "f.bytes, f.blocks, f.creation_date, f.modification_date, f.type";
 const FILE_TYPE_ARCHIVELOG_INT: u32 = 4;
-const FILE_TYPE_ARCHIVELOG_STR: &str = "ARCHIVELOG"; // as in v$asm_file.type
 
 pub struct RawOpenFileHandle {
     pub(crate) au_list: Vec<(u16, u32)>, // disk_number, allocation_unit
@@ -45,18 +44,8 @@ struct AsmAlias {
 impl AsmAlias {
 
     pub fn from_row_file(row: &Row) -> Result<Self, Error> {
-        let bytes: Option<u64>;
-        let blocks: Option<u64>;
-        let file_type: Option<String> = row.get("TYPE")?;
-        if file_type.is_some() && file_type.unwrap() == FILE_TYPE_ARCHIVELOG_STR {
-            // add +1 block to blocks (filesize) for the trailer block
-            blocks = Some(row.get::<_, u64>("BLOCKS")? + 1);
-            bytes = Some(row.get::<_, u64>("BYTES")? + 512);
-        } else {
-            bytes = row.get("BYTES")?;
-            blocks = row.get("BLOCKS")?;
-        }
-        
+        // let file_type: Option<String> = row.get("TYPE")?;
+
         Ok(Self {
             reference_index: row.get("REFERENCE_INDEX")?,
             alias_index: row.get("ALIAS_INDEX")?,
@@ -64,8 +53,8 @@ impl AsmAlias {
             name: row.get("NAME")?,
             alias_directory: row.get("ALIAS_DIRECTORY")?,
             system_created: row.get("SYSTEM_CREATED")?,
-            bytes,
-            blocks,
+            bytes: row.get("BYTES")?,
+            blocks: row.get("BLOCKS")?,
             creation_date: row.get("CREATION_DATE")?,
             modification_date: row.get("MODIFICATION_DATE")?,
         })
@@ -379,7 +368,7 @@ impl OracleConnection {
         let row = self.select_alias_file_by_parent_index_and_name(parent_inode.get_reference_index(), name)?;
 
         let alias = AsmAlias::from_row_file(&row)?;
-        
+        info!("query_asm_alias_ent(name={}, size={})", name, alias.get_file_attr().size);
         Ok(alias.get_file_attr())
     }
 
