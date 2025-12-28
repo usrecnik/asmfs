@@ -4,6 +4,7 @@ use fuser::{FileType, FileAttr};
 use oracle::sql_type::{OracleType, Timestamp};
 use chrono::{NaiveDate, DateTime, Utc};
 use std::collections::HashMap;
+use std::fs::File;
 
 use crate::inode;
 use inode::Inode;
@@ -26,7 +27,7 @@ pub struct RawOpenFileHandle {
     pub(crate) au_size: u32,
     pub(crate) file_size_bytes: u64,
     pub(crate) file_type: String, // as seen in v$asm_file.type
-    pub(crate) disk_list: HashMap<u16, String> // disk_number => path (e.g. /dev/sdc)
+    pub(crate) disk_list: HashMap<u16, File> // disk_number => open file handle of (e.g. /dev/sdc)
 }
 
 struct AsmAlias {
@@ -466,9 +467,28 @@ impl OracleConnection {
         let au_list = self.query_extent_map(group_number, file_number, mirror)?;
         let au_size = self.query_au_size(group_number)?;
 
-        let disk_list = self.query_asm_disks(group_number)?;
+        let disk_list :HashMap<u16, String> = self.query_asm_disks(group_number)?;
+       
+        let disk_list_open :HashMap<u16, File> = disk_list
+            .into_iter()
+            .map(|(disk_number, block_device)| {
+                let file = match File::open(&block_device) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        error!("Could not open block device {}: {}", &block_device, e);
+                        return Err(Error::new(ErrorKind::Other, format!("Could not open block device {}: {}", &block_device, e)));
+                    }
+                };
+                Ok((disk_number, file))
+            })
+            .collect::<Result<HashMap<u16, File>, Error>>()?;
+
         let retval = RawOpenFileHandle {
-            au_list, au_size, file_size_bytes, file_type, disk_list
+            au_list,
+            au_size,
+            file_size_bytes,
+            file_type,
+            disk_list: disk_list_open
         };
 
         Ok(retval)
