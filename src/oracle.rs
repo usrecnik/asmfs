@@ -211,8 +211,6 @@ impl OracleConnection {
                     and a.name = :2
         "#, ASM_ALIAS_COLUMNS, ASM_FILE_COLUMNS);
 
-        println!("Running query [{}]", query.as_str());
-        println!("parent_index={}, name={}", parent_index, name);
         self.conn.query_row(query.as_str(), &[&parent_index, &name])
     }
 
@@ -235,10 +233,12 @@ impl OracleConnection {
             FROM x$kffxp x
             WHERE x.group_kffxp = :1
                 AND x.number_kffxp = :2
-                AND x.pxn_kffxp = :3
-            ORDER BY x.xnum_kffxp, x.au_kffxp
+                AND x.lxn_kffxp = :3
+            ORDER BY x.xnum_kffxp, x.pxn_kffxp
         "#;
 
+        println!("Running query [{}]", query);
+        println!("group_number={}, file_number={}, mirror={}", group_number, file_number, mirror);
         self.conn.query(query, &[&group_number, &file_number, &mirror])
     }
 

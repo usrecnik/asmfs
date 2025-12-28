@@ -301,53 +301,69 @@ impl AsmFS {
         }
     }
 
-    fn read_raw(&mut self, _req: &Request, _ino: u64, fh: u64, offset: i64, size: u32, _flags: i32, _lock: Option<u64>, reply: ReplyData) {
+    fn read_raw(&mut self, _req: &Request, _ino: u64, fh: u64, offset: i64, bytes_requested: u32, _flags: i32, _lock: Option<u64>, reply: ReplyData) {
         let handle = self.handles_raw.get(&fh).unwrap();
+        info!("read_raw() (offset={}, bytes_requested={}, file_size={}, au_size={})", offset, bytes_requested, handle.file_size_bytes, handle.au_size);
 
+        let mut size :i64 = bytes_requested as i64;
         if offset as u64 + size as u64 > handle.file_size_bytes {
-            // @todo: we should reduce size if possible, not throw an error. This is for testing for now...
-            error!("read_raw() offset+size exceeds file size: offset={}, size={}, file_size={}", offset, size, handle.file_size_bytes);
-            reply.error(ENOENT);
-            return;
+            info!(".. requested size in bytes is beyond file size (offset={}, size={}, file_size={})", offset, size, handle.file_size_bytes);
+            size = ((offset + size) as u64 - handle.file_size_bytes) as i64;
+            if size <= 0 {
+                size = 0;
+            }
+            info!(".. this changed size to: (offset={}, (!)size={}, file_size={})", offset, size, handle.file_size_bytes);
         }
 
         let au_first = offset / handle.au_size as i64;
-        let au_last = au_first + (size as i64 / handle.au_size as i64);
+        let au_last = au_first + (size / handle.au_size as i64);
+
+        info!(".. read_raw() au_first={} (offset={} / au_size={})", au_first, offset, handle.au_size);
+        info!(".. read_raw() au_last={} (au_first={} + (size={} / au_size={})", au_last, au_first, size, handle.au_size);
 
         let mut buffer :Vec<u8> = Vec::with_capacity(size as usize);
 
+        info!(".. read_raw() begin loop through au_first={} to au_last={}", au_first, au_last);
         let mut bytes_read :usize = 0;
-        for au_index in au_first .. au_last {
+        for au_index in au_first .. au_last+1 { // `for x in from . to` (from is inclusive, to is exclusive), this is why +1 for au_last
+            info!(".... read_raw() au_index={} (au_first={}, au_last={})", au_index, au_first, au_last);
             let first_byte :u32 = if au_index == au_first {
                 offset as u32 % handle.au_size
             } else {
                 0
             };
+            info!("...... first_byte={} (offset={} % au_size={})", first_byte, offset, handle.au_size);
 
-            let last_byte = if size - (bytes_read as u32) < handle.au_size {
-                size - bytes_read as u32
+            let bytes_since_first = if size - (bytes_read as i64) < handle.au_size as i64 {
+                size - bytes_read as i64
             } else {
-                handle.au_size
+                handle.au_size as i64
             };
+            info!("...... bytes_since_first={}", bytes_since_first);
 
             let au_entry = handle.au_list[au_index as usize];
+            info!("...... au={} (au offset in given block device)", au_entry.1);
             let block_device = handle.disk_list.get(&au_entry.0).unwrap();
+            info!("...... block_device={}", block_device);
 
-            let au_buf = read_raw_int(block_device, handle.au_size, au_entry.1, first_byte, last_byte).expect("read_raw_int() failed");
+            let au_buf = read_raw_int(block_device, handle.au_size, au_entry.1, first_byte, bytes_since_first as u32).expect("read_raw_int() failed");
+            info!("...... got buffer={}", au_buf.len());
 
             bytes_read = bytes_read + au_buf.len();
             buffer.extend(au_buf)
         }
 
+        info!(".. read_raw() sending reply");
         reply.data(buffer.as_slice());
-        debug!(".. read_raw() ok, offset={}, size={}", offset, size);
+        info!(".. read_raw()");
     }
 }
 
-fn read_raw_int(block_device: &str, au_size: u32, allocation_unit: u32, first_byte: u32, last_byte: u32) -> io::Result<Vec<u8>>
+fn read_raw_int(block_device: &str, au_size: u32, allocation_unit: u32, first_byte: u32, bytes_since_first: u32) -> io::Result<Vec<u8>>
 {
+    info!(".. read_raw_int() au_size={}, allocation_unit={}, first_byte={}, bytes_since_first={}", au_size, allocation_unit, first_byte, bytes_since_first);
     let offset = (allocation_unit as u64 * au_size as u64) + first_byte as u64;
-    let length = (last_byte - first_byte + 1) as usize;
+    let length = bytes_since_first as usize;
 
     let mut file = File::open(block_device)?;
     file.seek(SeekFrom::Start(offset))?;
