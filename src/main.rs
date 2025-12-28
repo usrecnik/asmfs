@@ -55,8 +55,8 @@ fn main() {
     let connection_string = matches.get_one::<String>("conn");
     let mountpoint = matches.get_one::<String>("MOUNT_POINT").unwrap();
     let use_raw = !matches.get_flag("no-raw");
-    let mirror = matches.get_one::<u8>("mirror").unwrap_or(&0);
-    let mirror = *mirror;
+    let mirror = matches.get_one::<String>("mirror").map(|s| s.as_str()).unwrap_or("0");
+    let mirror: u8 = mirror.parse().unwrap_or(0);
 
     let mut options = vec![MountOption::RO, MountOption::FSName("asmfs".to_string())];
     if matches.get_flag("auto-unmount") {
