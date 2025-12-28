@@ -308,7 +308,7 @@ impl AsmFS {
         let mut size :i64 = bytes_requested as i64;
         if offset as u64 + size as u64 > handle.file_size_bytes {
             info!(".. requested size in bytes is beyond file size (offset={}, size={}, file_size={})", offset, size, handle.file_size_bytes);
-            size = ((offset + size) as u64 - handle.file_size_bytes) as i64;
+            size = (handle.file_size_bytes - offset as u64) as i64;
             if size <= 0 {
                 size = 0;
             }
