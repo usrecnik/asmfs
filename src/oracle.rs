@@ -231,7 +231,7 @@ impl OracleConnection {
         let query = r#"
             SELECT
                 x.disk_kffxp AS disk_number,
-                x.au_kffxp AS allocation_unit,
+                x.au_kffxp AS allocation_unit
             FROM x$kffxp x
             WHERE x.group_kffxp = :1
                 AND x.number_kffxp = :2
@@ -267,6 +267,7 @@ impl OracleConnection {
             let mut path :String = row.get(1)?;
 
             if path.starts_with("AFD:") {
+                path = path.replace("AFD:", "");
                 path = get_afd_map().get(&path).expect("Expected 'afdtool -getdevlist' to have value for all AFD disks in v$asm_disk").clone();
             }
 
@@ -475,7 +476,6 @@ impl OracleConnection {
         let au_size = self.query_au_size(group_number)?;
 
         let disk_list = self.query_asm_disks(group_number)?;
-
         let retval = RawOpenFileHandle {
             au_list, au_size, file_size_bytes, disk_list
         };

@@ -2,6 +2,7 @@ use std::io;
 use std::sync::OnceLock;
 use std::collections::HashMap;
 use std::process::Command;
+use log::info;
 
 static AFD_MAP: OnceLock<HashMap<String, String>> = OnceLock::new();
 
@@ -22,6 +23,7 @@ pub fn get_afd_map() -> &'static HashMap<String, String> {
  */
 fn get_afd_disk_mapping() -> io::Result<HashMap<String, String>> {
 
+    info!("Running 'afdtool -getdevlist'....");
     let mut map: HashMap<String, String> = HashMap::new();
 
     let output = Command::new("afdtool")
@@ -41,6 +43,8 @@ fn get_afd_disk_mapping() -> io::Result<HashMap<String, String>> {
             map.insert(parts[0].trim().to_string(), parts[1].trim().to_string());
         }
     }
+
+    info!("AFD device map: \n---\n{:?}\n---\n", map);
 
     Ok(map)
 }
