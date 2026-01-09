@@ -37,6 +37,14 @@ There are two different implementations on how `asmfs` can read files from ASM:
 * A raw access to block devices, which is the default and works as described here (link todo).
 * `dbms_diskgroup.read()` which is used only if you explicitly specify `--no-raw`. The limitations of this approach are described in [this blog post](https://blog.srecnik.info/asmfs-and-dbmsdiskgroupread)
 
+## Installation
+
+Grab one of the `.rpm` files from [asmfs releases](https://github.com/usrecnik/asmfs/releases) and simply run:
+
+```
+dnf install ./asmfs-VERSION.x86_64.rpm
+```
+
 ## Examples
 
 ### Raw mode with udev
