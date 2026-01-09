@@ -1,6 +1,6 @@
 # ASMFS
 
-A read-only FUSE filesystem that exposes **raw** Oracle ASM files.
+A read-only FUSE filesystem that exposes Oracle ASM files.
 
 ![Experimental](https://img.shields.io/badge/status-experimental-orange)
 
@@ -15,7 +15,6 @@ $ cargo build
 ## Help
 
 ```
-$ ./asmfs -help
 Usage: asmfs [OPTIONS] <MOUNT_POINT>
 
 Arguments:
@@ -23,33 +22,53 @@ Arguments:
 
 Options:
       --conn <CONNECTION_STRING>  Connection string to remote ASM instance - user/pass@host:port/service (user must have sysdba)
+      --no-raw                    Use DBMS_DISKGROUP.READ() instead of raw device access
+      --mirror <mirror>           0=>primary copy, 1=>first redundant copy, 2=>second redundant copy [default: 0]
       --auto-unmount              Automatically unmount on process exit
       --allow-root                Allow root user to access filesystem
   -h, --help                      Print help
   -V, --version                   Print version
 ```
 
-## Local Example
+## Two Modes
+
+There are two different implementations on how `asmfs` can read files from ASM:
+
+* A raw access to block devices, which is the default and works as described here (link todo).
+* `dbms_diskgroup.read()` which is used only if you explicitly specify `--no-raw`. The limitations of this approach are described in [this blog post](https://blog.srecnik.info/asmfs-and-dbmsdiskgroupread)
+
+## Examples
+
+### Raw mode with udev
+
+```
+@todo
+```
+
+### Raw mode with AFD
+
+```
+@todo
+```
+
+### `dbms_diskgroup.read` locally
 
 ```
 $ . oraenv
 ORACLE_SID = [+ASM] ? +ASM
 
-$ ./asmfs /mnt/asmfs/
+$ ./asmfs --no-raw /mnt/asmfs/
 ```
 
-## Remote Example
+### `dbms_diskgroup.read` remotely
 
 ```
-$ ./asmfs --conn user/pass@hostname:1521/+ASM /mnt/asmfs/
+$ ./asmfs --no-raw --conn user/pass@hostname:1521/+ASM /mnt/asmfs/
 ```
 
 ## Warning!
 
-This is __not__ meant for production usage. First of all, it uses _undocumented_ `dbms_diskgroup.read()` call to
-access raw blocks of files. Which, it seems, according to my testing, returns __raw__ data as written in ASM diskgroup. Meaning, if you
-copy files from this filesystem, be aware that first few bytes will likely be different to what you would get if you'd use `rman backup/restore` or `asmcmd cp`
-to copy files to local filesystem.
+This is __not__ meant for production usage. 
 
 This project is **experimental**, not well-tested, and still under development.
 
@@ -58,5 +77,3 @@ This project is **experimental**, not well-tested, and still under development.
 ## Screenshot (demo)
 
 ![asmfs demo](https://github.com/usrecnik/asmfs/blob/main/doc/asmfs_screenshot.png?raw=true)
-
-
