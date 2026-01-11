@@ -225,6 +225,7 @@ impl OracleConnection {
             WHERE x.group_kffxp = :1
                 AND x.number_kffxp = :2
                 AND x.lxn_kffxp = :3
+                AND x.xnum_kffxp != 2147483648
             ORDER BY x.xnum_kffxp, x.pxn_kffxp
         "#;
 
