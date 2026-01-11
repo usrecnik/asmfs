@@ -80,6 +80,14 @@ $ /opt/asmfs/asmfs/asmfs --no-raw /mnt/asmfs/
 $ /opt/asmfs/asmfs/asmfs --no-raw --conn user/pass@hostname:1521/+ASM /mnt/asmfs/
 ```
 
+## Debugging
+
+If you run into issues, you can find out more about what's going on by setting those env vars:
+
+```
+RUST_BACKTRACE=1 RUST_LOG=info /opt/asmfs/asmfs ...
+```
+
 ## Warning!
 
 This is __not__ meant for production usage. 
