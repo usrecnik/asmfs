@@ -79,6 +79,11 @@ $ /opt/asmfs/asmfs/asmfs --no-raw /mnt/asmfs/
 ```
 $ /opt/asmfs/asmfs/asmfs --no-raw --conn user/pass@hostname:1521/+ASM /mnt/asmfs/
 ```
+### Umounting
+
+```
+fusermount3 -u /mnt/asmfs/
+```
 
 ## Debugging
 
