@@ -229,8 +229,8 @@ impl OracleConnection {
             ORDER BY x.xnum_kffxp, x.pxn_kffxp
         "#;
 
-        println!("Running query [{}]", query);
-        println!("group_number={}, file_number={}, mirror={}", group_number, file_number, mirror);
+        // println!("Running query [{}]", query);
+        // println!("group_number={}, file_number={}, mirror={}", group_number, file_number, mirror);
         self.conn.query(query, &[&group_number, &file_number, &mirror])
     }
 
