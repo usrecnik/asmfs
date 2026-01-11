@@ -49,15 +49,21 @@ dnf install ./asmfs-VERSION.x86_64.rpm
 
 ### Raw mode with udev
 
+Run under `grid` user:
+
 ```
-@todo
+/opt/asmfs/asmfs /mnt/asmfs/
 ```
 
 ### Raw mode with AFD
 
+Run under `root` user (because otherwise AFD won't allow non-oracle I/O to ASM disks):
+
 ```
-@todo
+/opt/asmfs/asmfs --conn username/password@db-server:1521/+ASM /mnt/asmfs/
 ```
+
+(such `username` can be created on `+ASM` instance with `CREATE USER` syntax. Such user must also be granted at lease `SYSDBA` privilege.)
 
 ### `dbms_diskgroup.read` locally
 
@@ -65,13 +71,13 @@ dnf install ./asmfs-VERSION.x86_64.rpm
 $ . oraenv
 ORACLE_SID = [+ASM] ? +ASM
 
-$ ./asmfs --no-raw /mnt/asmfs/
+$ /opt/asmfs/asmfs/asmfs --no-raw /mnt/asmfs/
 ```
 
 ### `dbms_diskgroup.read` remotely
 
 ```
-$ ./asmfs --no-raw --conn user/pass@hostname:1521/+ASM /mnt/asmfs/
+$ /opt/asmfs/asmfs/asmfs --no-raw --conn user/pass@hostname:1521/+ASM /mnt/asmfs/
 ```
 
 ## Warning!
