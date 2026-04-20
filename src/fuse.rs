@@ -4,6 +4,7 @@ use std::ffi::OsStr;
 use std::collections::HashMap;
 use std::time::{Duration, UNIX_EPOCH};
 use std::fs::File;
+use std::os::unix::fs::FileExt;
 use std::io::{self, Read, Seek, SeekFrom};
 use log::{debug, info, error}; // debug
 use crate::oracle::{OracleConnection, RawOpenFileHandle};
@@ -381,11 +382,8 @@ fn read_raw_int(mut file_handle: &File, au_size: u32, allocation_unit: u32, firs
     let offset = (allocation_unit as u64 * au_size as u64) + first_byte as u64;
     let length = bytes_since_first as usize;
 
-    //let mut file = File::open(block_device)?;
-    file_handle.seek(SeekFrom::Start(offset))?;
-
     let mut buffer = vec![0u8; length];
-    file_handle.read_exact(&mut buffer)?;
+    file_handle.read_exact_at(&mut buffer, offset)?;
 
     Ok(buffer)
 }
