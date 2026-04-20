@@ -5,7 +5,7 @@ use std::time::{Duration, UNIX_EPOCH};
 use std::fs::File;
 use std::os::unix::fs::FileExt;
 use std::io::{self};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, RwLock};
 use log::{debug, info, error}; // debug
 use crate::oracle::{OracleConnection, RawOpenFileHandle};
 use oracle::{Error, ErrorKind};
@@ -36,8 +36,8 @@ pub struct AsmFS {
     ora: Mutex<OracleConnection>,
     connection_string: Option<String>,      // read-only after init
     mount_point: String,                    // read-only after init
-    handles_dbms: Mutex<HashMap<u64, OpenFileHandle>>,  // used for dbms mode, which is only supported in single-threaded mode (so no mutex needed)
-    handles_raw: Mutex<HashMap<u64, RawOpenFileHandle>>,
+    handles_dbms: Mutex<HashMap<u64, OpenFileHandle>>,
+    handles_raw: RwLock<HashMap<u64, Arc<RawOpenFileHandle>>>,
     use_raw: bool,  // read only after init
     mirror: u8  // read only after init
 }
@@ -62,7 +62,7 @@ impl AsmFS {
             connection_string,
             mount_point,
             handles_dbms: Mutex::new(HashMap::new()),
-            handles_raw: Mutex::new(HashMap::new()),
+            handles_raw: RwLock::new(HashMap::new()),
             use_raw,
             mirror }
     }
@@ -251,7 +251,11 @@ impl AsmFS {
         let h = self.ora.lock().unwrap().proc_open_raw(ino, self.mirror);
         match h {
             Ok(handle) => {
-                self.handles_raw.lock().unwrap().insert(ino, handle);
+                self.handles_raw
+                    .write()
+                    .unwrap()
+                    .insert(ino, Arc::new(handle));
+
                 debug!(".. open() ok, fh={}", ino);
                 reply.opened(FileHandle(ino), FopenFlags::empty());
             },
@@ -278,7 +282,7 @@ impl AsmFS {
     }
 
     fn release_raw(&self, _req: &Request<>, ino: u64, reply: ReplyEmpty) {
-        self.handles_raw.lock().unwrap().remove(&ino);
+        self.handles_raw.write().unwrap().remove(&ino);
         reply.ok();
         debug!(".. release() ok");
     }
@@ -300,8 +304,14 @@ impl AsmFS {
     }
 
     fn read_raw(&self, _req: &Request, _ino: u64, fh: u64, offset: u64, bytes_requested: u32, _flags: OpenFlags, _lock: Option<LockOwner>, reply: ReplyData) {
-        let guard = self.handles_raw.lock().unwrap();
-        let handle = guard.get(&fh).unwrap();
+        let handle = {
+            let guard = self.handles_raw.read().unwrap();
+            match guard.get(&fh) {
+                Some(h) => Arc::clone(h),
+                None => {reply.error(Errno::EBADF); return;}
+            }
+        };
+
         // info!("read_raw() (offset={}, bytes_requested={}, file_size={}, au_size={})", offset, bytes_requested, handle.file_size_bytes, handle.au_size);
 
         let mut size :u64 = bytes_requested as u64;
