@@ -65,7 +65,9 @@ fn main() {
     if matches.get_flag("allow-root") {
         options.push(MountOption::AllowRoot);
     }
-    
+
+    options.push(MountOption::CUSTOM("max_read=33554432".into())); // 32MB max read
+
     match fuser::mount2(AsmFS::new(mountpoint.clone(), connection_string.cloned(), use_raw, mirror), mountpoint, &options) {
         Ok(_) => {},
         Err(e) => {

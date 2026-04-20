@@ -317,7 +317,11 @@ impl AsmFS {
         }
 
         let au_first = offset / handle.au_size as i64;
-        let au_last = au_first + (size / handle.au_size as i64);
+        let au_last = if size > 0 {
+            (offset + size - 1) / handle.au_size as i64
+        } else {
+            au_first
+        };
 
         // info!(".. read_raw() au_first={} (offset={} / au_size={})", au_first, offset, handle.au_size);
         // info!(".. read_raw() au_last={} (au_first={} + (size={} / au_size={})", au_last, au_first, size, handle.au_size);
@@ -326,7 +330,7 @@ impl AsmFS {
 
         // info!(".. read_raw() begin loop through au_first={} to au_last={}", au_first, au_last);
         let mut bytes_read :usize = 0;
-        for au_index in au_first .. au_last+1 { // `for x in from . to` (from is inclusive, to is exclusive), this is why +1 for au_last
+        for au_index in au_first ..= au_last { // `for x in from . to` (both are inclusive)
             // info!(".... read_raw() au_index={} (au_first={}, au_last={})", au_index, au_first, au_last);
             let first_byte :u32 = if au_index == au_first {
                 offset as u32 % handle.au_size
