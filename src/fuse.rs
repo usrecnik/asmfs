@@ -6,6 +6,7 @@ use std::time::{Duration, UNIX_EPOCH};
 use std::fs::File;
 use std::os::unix::fs::FileExt;
 use std::io::{self};
+use std::sync::Mutex;
 use log::{debug, info, error}; // debug
 use crate::oracle::{OracleConnection, RawOpenFileHandle};
 use oracle::{Error, ErrorKind};
@@ -33,13 +34,13 @@ impl OpenFileHandle {
 }
 
 pub struct AsmFS {
-    ora: OracleConnection,
-    connection_string: Option<String>,
-    mount_point: String,
-    handles: HashMap<u64, OpenFileHandle>, // see open() and close()
-    handles_raw: HashMap<u64, RawOpenFileHandle>,
-    use_raw: bool,
-    mirror: u8
+    ora: Mutex<OracleConnection>,
+    connection_string: Option<String>,      // read-only after init
+    mount_point: String,                    // read-only after init
+    handles: HashMap<u64, OpenFileHandle>,  // used for dbms mode, which is only supported in single-threaded mode (so no mutex needed)
+    handles_raw: Mutex<HashMap<u64, RawOpenFileHandle>>,
+    use_raw: bool,  // read only after init
+    mirror: u8  // read only after init
 }
 
 impl AsmFS {
@@ -58,11 +59,11 @@ impl AsmFS {
         };
 
         AsmFS {
-            ora,
+            ora: Mutex::new(ora),
             connection_string,
             mount_point,
             handles: HashMap::new(),
-            handles_raw: HashMap::new(),
+            handles_raw: Mutex::new(HashMap::new()),
             use_raw,
             mirror }
     }
@@ -77,10 +78,10 @@ impl Filesystem for AsmFS {
         let contents: Result<Vec<(u64, FileType, String)>, Error>;
         if ino == 1 {
             debug!(".. readdir() ok");
-            contents = self.ora.query_asm_diskgroup_vec();
+            contents = self.ora.lock().unwrap().query_asm_diskgroup_vec();
         } else {
             debug!(".. readdir() failed: {}", ino);
-            contents = self.ora.query_asm_alias_vec(ino);
+            contents = self.ora.lock().unwrap().query_asm_alias_vec(ino);
         }
 
         match contents {
@@ -115,9 +116,9 @@ impl Filesystem for AsmFS {
         let contents: Result<FileAttr, Error>;
 
         if parent == 1 {
-            contents = self.ora.query_asm_diskgroup_ent_name(&name_str);
+            contents = self.ora.lock().unwrap().query_asm_diskgroup_ent_name(&name_str);
         } else {
-            contents = self.ora.query_asm_alias_ent(parent, &name_str);
+            contents = self.ora.lock().unwrap().query_asm_alias_ent(parent, &name_str);
         }
 
         match contents {
@@ -158,9 +159,9 @@ impl Filesystem for AsmFS {
             return reply.attr(&TTL, &root);
 
         } else if ino < 2000 {
-            return reply.attr(&TTL, &self.ora.query_asm_diskgroup_ent_ino(ino));
+            return reply.attr(&TTL, &self.ora.lock().unwrap().query_asm_diskgroup_ent_ino(ino));
         } else {
-            let tmp = match self.ora.query_asm_alias_ent_ino(ino) {
+            let tmp = match self.ora.lock().unwrap().query_asm_alias_ent_ino(ino) {
                 Ok(entry) => entry,
                 Err(e) => {
                     error!("query asm$alias failed: {}", e);
@@ -175,7 +176,7 @@ impl Filesystem for AsmFS {
 
     fn readlink(&mut self, _req: &Request<'_>, ino: u64, reply: ReplyData) {
         info!("readlink(ino={})", ino);
-        match self.ora.query_asm_alias_link(ino) {
+        match self.ora.lock().unwrap().query_asm_alias_link(ino) {
             Ok(target) => {
                 let abs_target: String = format!("{}{}", self.mount_point, target);
                 debug!(".. readlink() ok, target={}", abs_target);
@@ -254,10 +255,10 @@ impl AsmFS {
     }
 
     fn open_raw(&mut self, _req: &Request<'_>, ino: u64, _flags: i32, reply: ReplyOpen) {
-        let h = self.ora.proc_open_raw(ino, self.mirror);
+        let h = self.ora.lock().unwrap().proc_open_raw(ino, self.mirror);
         match h {
             Ok(handle) => {
-                self.handles_raw.insert(ino, handle);
+                self.handles_raw.lock().unwrap().insert(ino, handle);
                 debug!(".. open() ok, fh={}", ino);
                 reply.opened(ino, 0);
             },
@@ -283,7 +284,7 @@ impl AsmFS {
     }
 
     fn release_raw(&mut self, _req: &Request<'_>, _ino: u64, _fh: u64, _flags: i32, _lock_owner: Option<u64>, _flush: bool, reply: ReplyEmpty) {
-        self.handles_raw.remove(&_ino);
+        self.handles_raw.lock().unwrap().remove(&_ino);
         reply.ok();
         debug!(".. release() ok");
     }
@@ -304,7 +305,8 @@ impl AsmFS {
     }
 
     fn read_raw(&mut self, _req: &Request, _ino: u64, fh: u64, offset: i64, bytes_requested: u32, _flags: i32, _lock: Option<u64>, reply: ReplyData) {
-        let handle = self.handles_raw.get(&fh).unwrap();
+        let guard = self.handles_raw.lock().unwrap();
+        let handle = guard.get(&fh).unwrap();
         // info!("read_raw() (offset={}, bytes_requested={}, file_size={}, au_size={})", offset, bytes_requested, handle.file_size_bytes, handle.au_size);
 
         let mut size :i64 = bytes_requested as i64;

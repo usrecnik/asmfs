@@ -68,13 +68,32 @@ fn main() {
 
     options.push(MountOption::CUSTOM("max_read=33554432".into())); // 32MB max read
 
-    match fuser::mount2(AsmFS::new(mountpoint.clone(), connection_string.cloned(), use_raw, mirror), mountpoint, &options) {
-        Ok(_) => {},
-        Err(e) => {
-            eprintln!("Failed to mount FUSE filesystem: {:?}", e);
-            eprintln!("Error kind: {:?}", e.kind());
-            eprintln!("OS error code: {:?}", e.raw_os_error());
-            std::process::exit(1);
+    if use_raw {
+        // Raw mode: multithreaded, disk reads are parallel across FUSE requests.
+        let _session = match fuser::spawn_mount2(
+            AsmFS::new(mountpoint.clone(), connection_string.cloned(), use_raw, mirror),
+            mountpoint,
+            &options
+        ) {
+            Ok(session) => session,
+            Err(e) => {
+                eprintln!("Failed to mount multi-threaded FUSE filesystem: {:?}", e);
+                eprintln!("Error kind: {:?}", e.kind());
+                eprintln!("OS error code: {:?}", e.raw_os_error());
+                std::process::exit(1);
+            }
+        };
+        std::thread::park();
+    } else {
+        // dbms mode: single-threaded - we only have one database connection
+        match fuser::mount2(AsmFS::new(mountpoint.clone(), connection_string.cloned(), use_raw, mirror), mountpoint, &options) {
+            Ok(_) => {},
+            Err(e) => {
+                eprintln!("Failed to mount single-threaded FUSE filesystem: {:?}", e);
+                eprintln!("Error kind: {:?}", e.kind());
+                eprintln!("OS error code: {:?}", e.raw_os_error());
+                std::process::exit(1);
+            }
         }
     }
 }
