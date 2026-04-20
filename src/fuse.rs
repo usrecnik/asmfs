@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::time::{Duration, UNIX_EPOCH};
 use std::fs::File;
 use std::os::unix::fs::FileExt;
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{self};
 use log::{debug, info, error}; // debug
 use crate::oracle::{OracleConnection, RawOpenFileHandle};
 use oracle::{Error, ErrorKind};
@@ -376,7 +376,7 @@ impl AsmFS {
     }
 }
 
-fn read_raw_int(mut file_handle: &File, au_size: u32, allocation_unit: u32, first_byte: u32, bytes_since_first: u32) -> io::Result<Vec<u8>>
+fn read_raw_int(file_handle: &File, au_size: u32, allocation_unit: u32, first_byte: u32, bytes_since_first: u32) -> io::Result<Vec<u8>>
 {
     // info!(".. read_raw_int() au_size={}, allocation_unit={}, first_byte={}, bytes_since_first={}", au_size, allocation_unit, first_byte, bytes_since_first);
     let offset = (allocation_unit as u64 * au_size as u64) + first_byte as u64;
