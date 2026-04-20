@@ -2,9 +2,7 @@ use fuser::{Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Gener
 use std::ffi::OsStr;
 use std::collections::HashMap;
 use std::time::{Duration, UNIX_EPOCH};
-use std::fs::File;
 use std::os::unix::fs::FileExt;
-use std::io::{self};
 use std::sync::{Arc, Mutex, RwLock};
 use log::{debug, info, error}; // debug
 use crate::oracle::{OracleConnection, RawOpenFileHandle};
@@ -312,87 +310,64 @@ impl AsmFS {
             }
         };
 
-        // info!("read_raw() (offset={}, bytes_requested={}, file_size={}, au_size={})", offset, bytes_requested, handle.file_size_bytes, handle.au_size);
-
-        let mut size :u64 = bytes_requested as u64;
-        if offset + size > handle.file_size_bytes {
-            // info!(".. requested size in bytes is beyond file size (offset={}, size={}, file_size={})", offset, size, handle.file_size_bytes);
-            size = handle.file_size_bytes - offset;
-            if size <= 0 {
-                size = 0;
-            }
-            // info!(".. this changed size to: (offset={}, (!)size={}, file_size={})", offset, size, handle.file_size_bytes);
-        }
-
-        let au_first = offset / (handle.au_size as u64);
-        let au_last = if size > 0 {
-            (offset + size - 1) / (handle.au_size as u64)
-        } else {
-            au_first
+        // clamp requested size to file size
+        let size: usize = {
+            let s = bytes_requested as u64;
+            let clamped = if offset + s > handle.file_size_bytes {
+                handle.file_size_bytes.saturating_sub(offset)
+            } else {
+                s
+            };
+            clamped as usize
         };
 
-        // info!(".. read_raw() au_first={} (offset={} / au_size={})", au_first, offset, handle.au_size);
-        // info!(".. read_raw() au_last={} (au_first={} + (size={} / au_size={})", au_last, au_first, size, handle.au_size);
+        if size == 0 {
+            reply.data(&[]);
+            return;
+        }
 
-        let mut buffer :Vec<u8> = Vec::with_capacity(size as usize);
+        let au_size = handle.au_size as u64;
+        let au_first = offset / au_size;
+        let au_last  = (offset + size as u64 - 1) / au_size;
 
-        // info!(".. read_raw() begin loop through au_first={} to au_last={}", au_first, au_last);
-        let mut bytes_read :usize = 0;
-        for au_index in au_first ..= au_last { // `for x in from . to` (both are inclusive)
-            // info!(".... read_raw() au_index={} (au_first={}, au_last={})", au_index, au_first, au_last);
-            let first_byte :u32 = if au_index == au_first {
-                offset as u32 % handle.au_size
+        // single allocation for the whole reply
+        let mut buffer = vec![0u8; size];
+        let mut bytes_read: usize = 0;
+
+        for au_index in au_first..=au_last {
+            let first_byte: u32 = if au_index == au_first {
+                (offset % au_size) as u32
             } else {
                 0
             };
-            // info!("...... first_byte={} (offset={} % au_size={})", first_byte, offset, handle.au_size);
 
-            let bytes_since_first = if size - (bytes_read as u64) < handle.au_size as u64 {
-                size - bytes_read as u64
-            } else {
-                handle.au_size as u64
-            };
-            // info!("...... bytes_since_first={}", bytes_since_first);
+            // we can read at most (au_size - first_byte) bytes from this AU,
+            // and we need at most (size - bytes_read) total
+            let au_remaining = handle.au_size as usize - first_byte as usize;
+            let still_needed = size - bytes_read;
+            let chunk_len = std::cmp::min(au_remaining, still_needed);
 
             let au_entry = handle.au_list[au_index as usize];
-            // info!("...... au={} (au offset in given block device)", au_entry.1);
             let file_handle = handle.disk_list.get(&au_entry.0).unwrap();
+            let disk_offset = au_entry.1 as u64 * au_size + first_byte as u64;
 
-            let au_buf = read_raw_int(file_handle, handle.au_size, au_entry.1, first_byte, bytes_since_first as u32).expect("read_raw_int() failed");
-            // info!("...... got buffer={}", au_buf.len());
+            file_handle
+                .read_exact_at(&mut buffer[bytes_read..bytes_read + chunk_len], disk_offset)
+                .expect("read_exact_at() failed");
 
-            bytes_read = bytes_read + au_buf.len();
-            buffer.extend(au_buf)
+            bytes_read += chunk_len;
         }
 
         if offset == 0 && au_first == 0 && MAGIC_FILE_TYPES.contains(&handle.file_type.as_str()) {
-            // this buffer contains the first block of the file
-            match fix_header_block(&mut buffer) {
-                Ok(()) => {},
-                Err(e) => {
-                    error!(".. read_raw() failed to fix header block: {}", e);
-                    reply.error(Errno::ENOENT);
-                    return;
-                }
+            if let Err(e) = fix_header_block(&mut buffer) {
+                error!(".. read_raw() failed to fix header block: {}", e);
+                reply.error(Errno::ENOENT);
+                return;
             }
         }
 
-        // info!(".. read_raw() sending reply");
-        reply.data(buffer.as_slice());
-        // info!(".. read_raw()");
+        reply.data(&buffer);
     }
-}
-
-fn read_raw_int(file_handle: &File, au_size: u32, allocation_unit: u32, first_byte: u32, bytes_since_first: u32) -> io::Result<Vec<u8>>
-{
-    // info!(".. read_raw_int() au_size={}, allocation_unit={}, first_byte={}, bytes_since_first={}", au_size, allocation_unit, first_byte, bytes_since_first);
-    let offset = (allocation_unit as u64 * au_size as u64) + first_byte as u64;
-    let length = bytes_since_first as usize;
-
-    let mut buffer = vec![0u8; length];
-    file_handle.read_exact_at(&mut buffer, offset)?;
-
-    Ok(buffer)
 }
 
 fn fix_header_block(buffer: &mut Vec<u8>) -> Result<(), Error> {
