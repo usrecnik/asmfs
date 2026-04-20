@@ -5,6 +5,8 @@ mod afd;
 
 use clap::{Arg, ArgAction, Command};
 use fuser::MountOption;
+use fuser::SessionACL;
+use fuser::Config;
 use fuse::AsmFS;
 
 fn main() {
@@ -44,12 +46,6 @@ fn main() {
                 .action(ArgAction::SetTrue)
                 .help("Automatically unmount on process exit"),
         )
-        .arg(
-            Arg::new("allow-root")
-                .long("allow-root")
-                .action(ArgAction::SetTrue)
-                .help("Allow root user to access filesystem"),
-        )
         .get_matches();
 
     let connection_string = matches.get_one::<String>("conn");
@@ -62,15 +58,18 @@ fn main() {
     if matches.get_flag("auto-unmount") {
         options.push(MountOption::AutoUnmount);
     }
-    if matches.get_flag("allow-root") {
-        options.push(MountOption::AllowRoot);
-    }
 
     options.push(MountOption::CUSTOM("max_read=33554432".into())); // 32MB max read
     options.push(MountOption::RO); // force read-only
     options.push(MountOption::Async);
+
+    let mut cfg = Config::default();
+    cfg.acl = SessionACL::Owner;
+    cfg.n_threads = Some(8);
+    cfg.clone_fd = true;
+    cfg.mount_options = options;
     
-    match fuser::mount2(AsmFS::new(mountpoint.clone(), connection_string.cloned(), use_raw, mirror), mountpoint, &options) {
+    match fuser::mount2(AsmFS::new(mountpoint.clone(), connection_string.cloned(), use_raw, mirror), mountpoint, &cfg) {
         Ok(_) => {},
         Err(e) => {
             eprintln!("Failed to mount FUSE filesystem: {:?}", e);

@@ -1,5 +1,4 @@
-use fuser::{FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, Request};
-use libc::{ENOENT}; /* ENOSYS, EINVAL */
+use fuser::{Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation, INodeNo, LockOwner, OpenFlags, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, Request};
 use std::ffi::OsStr;
 use std::collections::HashMap;
 use std::time::{Duration, UNIX_EPOCH};
@@ -37,7 +36,7 @@ pub struct AsmFS {
     ora: Mutex<OracleConnection>,
     connection_string: Option<String>,      // read-only after init
     mount_point: String,                    // read-only after init
-    handles: HashMap<u64, OpenFileHandle>,  // used for dbms mode, which is only supported in single-threaded mode (so no mutex needed)
+    handles_dbms: Mutex<HashMap<u64, OpenFileHandle>>,  // used for dbms mode, which is only supported in single-threaded mode (so no mutex needed)
     handles_raw: Mutex<HashMap<u64, RawOpenFileHandle>>,
     use_raw: bool,  // read only after init
     mirror: u8  // read only after init
@@ -62,7 +61,7 @@ impl AsmFS {
             ora: Mutex::new(ora),
             connection_string,
             mount_point,
-            handles: HashMap::new(),
+            handles_dbms: Mutex::new(HashMap::new()),
             handles_raw: Mutex::new(HashMap::new()),
             use_raw,
             mirror }
@@ -71,76 +70,39 @@ impl AsmFS {
 
 impl Filesystem for AsmFS {
 
-    fn readdir(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, mut reply: ReplyDirectory) {
-
-        info!("readdir(ino={}, offset={}, _fh={})", ino, offset, _fh);
-
-        let contents: Result<Vec<(u64, FileType, String)>, Error>;
-        if ino == 1 {
-            debug!(".. readdir() ok");
-            contents = self.ora.lock().unwrap().query_asm_diskgroup_vec();
-        } else {
-            debug!(".. readdir() failed: {}", ino);
-            contents = self.ora.lock().unwrap().query_asm_alias_vec(ino);
-        }
-
-        match contents {
-            Ok(dg_vec) => {
-                for (i, entry) in dg_vec.into_iter().enumerate().skip(offset as usize) {
-                    if reply.add(entry.0, (i + 1) as i64, entry.1, entry.2) {
-                        break;
-                    }
-                }
-            }
-            Err(e) => {
-                error!("readdir() failed: {}", e);
-                reply.error(ENOENT);
-                return;
-            }
-        }
-
-        reply.ok();
-    }
-
-    /*
-     Look up a directory entry by name and get its attributes.
-     _req: Metadata about the FUSE request, including user ID, group ID, process ID, etc.
-     parent: The inode number (or file handle) of the parent directory in which to look for name.
-     name: The name of the directory entry being looked up (e.g., "foo.txt")
-     */
-    fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+    fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
         let name_str = name.to_str().expect("unable to convert OsStr to str");
 
         info!("lookup(parent={}, name={})", parent, name_str);
 
         let contents: Result<FileAttr, Error>;
 
-        if parent == 1 {
+        if parent.0 == 1 {
             contents = self.ora.lock().unwrap().query_asm_diskgroup_ent_name(&name_str);
         } else {
-            contents = self.ora.lock().unwrap().query_asm_alias_ent(parent, &name_str);
+            contents = self.ora.lock().unwrap().query_asm_alias_ent(parent.0, &name_str);
         }
 
         match contents {
             Ok(attr) => {
                 debug!(".. lookup() ok");
-                reply.entry(&TTL, &attr, 0);
+                reply.entry(&TTL, &attr, Generation(0));
                 return;
             },
             Err(e) => {
                 error!(".. lookup() failed: {}", e);
-                reply.error(ENOENT);
+                reply.error(Errno::ENOENT);
             }
         }
     }
 
-    fn getattr(&mut self, _req: &Request, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
+    fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
 
         info!("getattr(ino={})", ino);
 
-        if ino == 1 {
+        if ino.0 == 1 {
             let root = FileAttr {
-                ino: 1,
+                ino: INodeNo(1),
                 size: 0,
                 blocks: 0,
                 atime: UNIX_EPOCH,
@@ -158,25 +120,24 @@ impl Filesystem for AsmFS {
             };
             return reply.attr(&TTL, &root);
 
-        } else if ino < 2000 {
-            return reply.attr(&TTL, &self.ora.lock().unwrap().query_asm_diskgroup_ent_ino(ino));
+        } else if ino.0 < 2000 {
+            return reply.attr(&TTL, &self.ora.lock().unwrap().query_asm_diskgroup_ent_ino(ino.0));
         } else {
-            let tmp = match self.ora.lock().unwrap().query_asm_alias_ent_ino(ino) {
+            let tmp = match self.ora.lock().unwrap().query_asm_alias_ent_ino(ino.0) {
                 Ok(entry) => entry,
                 Err(e) => {
                     error!("query asm$alias failed: {}", e);
-                    return reply.error(ENOENT);
+                    return reply.error(Errno::ENOENT);
                 }
             };
 
             return reply.attr(&TTL, &tmp);
         }
-        //return reply.error(ENOENT)
     }
 
-    fn readlink(&mut self, _req: &Request<'_>, ino: u64, reply: ReplyData) {
+    fn readlink(&self, _req: &Request, ino: INodeNo, reply: ReplyData) {
         info!("readlink(ino={})", ino);
-        match self.ora.lock().unwrap().query_asm_alias_link(ino) {
+        match self.ora.lock().unwrap().query_asm_alias_link(ino.0) {
             Ok(target) => {
                 let abs_target: String = format!("{}{}", self.mount_point, target);
                 debug!(".. readlink() ok, target={}", abs_target);
@@ -184,50 +145,82 @@ impl Filesystem for AsmFS {
             },
             Err(e) => {
                 error!(".. readlink() failed: {}", e);
-                reply.error(ENOENT);
+                reply.error(Errno::ENOENT);
                 return;
             }
         };
     }
 
-    fn open(&mut self, _req: &Request<'_>, ino: u64, _flags: i32, reply: ReplyOpen) {
+    fn open(&self, _req: &Request, ino: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
         info!("open(ino={})", ino);
 
         if self.use_raw {
-            self.open_raw(_req, ino, _flags, reply);
+            self.open_raw(_req, ino.0, _flags, reply);
         } else {
-            self.open_dbms(_req, ino, _flags, reply);
+            self.open_dbms(_req, ino.0, _flags, reply);
         }
     }
 
-    fn release(&mut self, _req: &Request<'_>, _ino: u64, fh: u64, _flags: i32, _lock_owner: Option<u64>, _flush: bool, reply: ReplyEmpty) {
+    fn read(&self, _req: &Request, ino: INodeNo, fh: FileHandle, offset: u64, size: u32, _flags: OpenFlags, _lock: Option<LockOwner>, reply: ReplyData) {
+        // info!("read(ino={}, _fh={}, offset={}, _size={}, flags={})", ino, fh, offset, size, _flags);
+        if self.use_raw {
+            self.read_raw(_req, ino.0, fh.0, offset, size, _flags, _lock, reply);
+        } else {
+            self.read_dbms(_req, ino.0, fh.0, offset, size, _flags, _lock, reply);
+        }
+    }
+
+    fn release(&self, _req: &Request, ino: INodeNo, fh: FileHandle, _flags: OpenFlags, _lock_owner: Option<LockOwner>, _flush: bool, reply: ReplyEmpty) {
         info!("release(fh={})", fh);
 
         if self.use_raw {
-            self.release_raw(_req, _ino, fh, _flags, _lock_owner, _flush, reply);
+            self.release_raw(_req, ino.0, reply);
         } else {
-            self.release_dbms(_req, _ino, fh, _flags, _lock_owner, _flush, reply);
+            self.release_dbms(_req, fh.0, reply);
         }
     }
 
-    fn read(&mut self, _req: &Request, ino: u64, fh: u64, offset: i64, size: u32, _flags: i32, _lock: Option<u64>, reply: ReplyData) {
-        // info!("read(ino={}, _fh={}, offset={}, _size={}, flags={})", ino, fh, offset, size, _flags);
-        if self.use_raw {
-            self.read_raw(_req, ino, fh, offset, size, _flags, _lock, reply);
+    fn readdir(&self, _req: &Request, ino: INodeNo, _fh: FileHandle, offset: u64, mut reply: ReplyDirectory) {
+
+        info!("readdir(ino={}, offset={}, _fh={})", ino, offset, _fh);
+        let contents: Result<Vec<(u64, FileType, String)>, Error>;
+
+        if ino.0 == 1 {
+            debug!(".. readdir() ok");
+            contents = self.ora.lock().unwrap().query_asm_diskgroup_vec();
         } else {
-            self.read_dbms(_req, ino, fh, offset, size, _flags, _lock, reply);
+            debug!(".. readdir() failed: {}", ino);
+            contents = self.ora.lock().unwrap().query_asm_alias_vec(ino.0);
         }
+
+        match contents {
+            Ok(dg_vec) => {
+                for (i, entry) in dg_vec.into_iter().enumerate().skip(offset as usize) {
+
+                    if reply.add(INodeNo(entry.0), (i + 1) as u64, entry.1, entry.2) {
+                        break;
+                    }
+                }
+            }
+            Err(e) => {
+                error!("readdir() failed: {}", e);
+                //reply.error(ENOENT);
+                return;
+            }
+        }
+
+        reply.ok();
     }
 }
 
 impl AsmFS {
-    fn open_dbms(&mut self, _req: &Request<'_>, ino: u64, _flags: i32, reply: ReplyOpen) {
+    fn open_dbms(&self, _req: &Request, ino: u64, _flags: OpenFlags, reply: ReplyOpen) {
         // each call to open() establishes new connection
         let conn = match OracleConnection::connect(self.connection_string.clone()) {
             Ok(ora) => ora,
             Err(e) => {
                 error!("open() failed establishing new connection: {}", e);
-                reply.error(ENOENT);
+                reply.error(Errno::ENOENT);
                 return;
             }
         };
@@ -242,35 +235,36 @@ impl AsmFS {
                     file_type: data.4
                 };
 
-                self.handles.insert(data.0, handle);
+                self.handles_dbms.lock().unwrap().insert(data.0, handle);
 
-                reply.opened(data.0, 0);
+                reply.opened(FileHandle(data.0), FopenFlags::empty());
                 debug!(".. open() ok, fh={}", data.0);
             },
             Err(e) => {
                 error!(".. open() failed: {}", e);
-                reply.error(ENOENT);
+                reply.error(Errno::ENOENT);
             }
         }
     }
 
-    fn open_raw(&mut self, _req: &Request<'_>, ino: u64, _flags: i32, reply: ReplyOpen) {
+    fn open_raw(&self, _req: &Request, ino: u64, _flags: OpenFlags, reply: ReplyOpen) {
         let h = self.ora.lock().unwrap().proc_open_raw(ino, self.mirror);
         match h {
             Ok(handle) => {
                 self.handles_raw.lock().unwrap().insert(ino, handle);
                 debug!(".. open() ok, fh={}", ino);
-                reply.opened(ino, 0);
+                reply.opened(FileHandle(ino), FopenFlags::empty());
             },
             Err(e) => {
                 error!(".. open() failed: {}", e);
-                reply.error(ENOENT)
+                reply.error(Errno::ENOENT)
             }
         }
     }
 
-    fn release_dbms(&mut self, _req: &Request<'_>, _ino: u64, fh: u64, _flags: i32, _lock_owner: Option<u64>, _flush: bool, reply: ReplyEmpty) {
-        let handle = self.handles.get(&fh).unwrap();
+    fn release_dbms(&self, _req: &Request, fh: u64, reply: ReplyEmpty) {
+        let mut guard = self.handles_dbms.lock().unwrap();
+        let handle = guard.get(&fh).unwrap();
         match handle.conn.proc_close(fh) {
             Ok(()) => {
                 reply.ok();
@@ -280,17 +274,18 @@ impl AsmFS {
                 error!(".. release() failed: {}", e);
             }
         }
-        self.handles.remove(&fh);
+        guard.remove(&fh);
     }
 
-    fn release_raw(&mut self, _req: &Request<'_>, _ino: u64, _fh: u64, _flags: i32, _lock_owner: Option<u64>, _flush: bool, reply: ReplyEmpty) {
-        self.handles_raw.lock().unwrap().remove(&_ino);
+    fn release_raw(&self, _req: &Request<>, ino: u64, reply: ReplyEmpty) {
+        self.handles_raw.lock().unwrap().remove(&ino);
         reply.ok();
         debug!(".. release() ok");
     }
 
-    fn read_dbms(&mut self, _req: &Request, _ino: u64, fh: u64, offset: i64, size: u32, _flags: i32, _lock: Option<u64>, reply: ReplyData) {
-        let handle = self.handles.get(&fh).unwrap();
+    fn read_dbms(&self, _req: &Request, _ino: u64, fh: u64, offset: u64, size: u32, _flags: OpenFlags, _lock: Option<LockOwner>, reply: ReplyData) {
+        let guard = self.handles_dbms.lock().unwrap();
+        let handle = guard.get(&fh).unwrap();
 
         match handle.conn.proc_read(fh, offset, size, handle.block_size, handle.bytes_size_fs(), handle.bytes_size_asm(), handle.file_type) {
             Ok(buffer) => {
@@ -299,29 +294,29 @@ impl AsmFS {
             },
             Err(e) => {
                 error!("read() failed: {}", e);
-                reply.error(ENOENT);
+                reply.error(Errno::ENOENT);
             }
         }
     }
 
-    fn read_raw(&mut self, _req: &Request, _ino: u64, fh: u64, offset: i64, bytes_requested: u32, _flags: i32, _lock: Option<u64>, reply: ReplyData) {
+    fn read_raw(&self, _req: &Request, _ino: u64, fh: u64, offset: u64, bytes_requested: u32, _flags: OpenFlags, _lock: Option<LockOwner>, reply: ReplyData) {
         let guard = self.handles_raw.lock().unwrap();
         let handle = guard.get(&fh).unwrap();
         // info!("read_raw() (offset={}, bytes_requested={}, file_size={}, au_size={})", offset, bytes_requested, handle.file_size_bytes, handle.au_size);
 
-        let mut size :i64 = bytes_requested as i64;
-        if offset as u64 + size as u64 > handle.file_size_bytes {
+        let mut size :u64 = bytes_requested as u64;
+        if offset + size > handle.file_size_bytes {
             // info!(".. requested size in bytes is beyond file size (offset={}, size={}, file_size={})", offset, size, handle.file_size_bytes);
-            size = (handle.file_size_bytes - offset as u64) as i64;
+            size = handle.file_size_bytes - offset;
             if size <= 0 {
                 size = 0;
             }
             // info!(".. this changed size to: (offset={}, (!)size={}, file_size={})", offset, size, handle.file_size_bytes);
         }
 
-        let au_first = offset / handle.au_size as i64;
+        let au_first = offset / (handle.au_size as u64);
         let au_last = if size > 0 {
-            (offset + size - 1) / handle.au_size as i64
+            (offset + size - 1) / (handle.au_size as u64)
         } else {
             au_first
         };
@@ -342,10 +337,10 @@ impl AsmFS {
             };
             // info!("...... first_byte={} (offset={} % au_size={})", first_byte, offset, handle.au_size);
 
-            let bytes_since_first = if size - (bytes_read as i64) < handle.au_size as i64 {
-                size - bytes_read as i64
+            let bytes_since_first = if size - (bytes_read as u64) < handle.au_size as u64 {
+                size - bytes_read as u64
             } else {
-                handle.au_size as i64
+                handle.au_size as u64
             };
             // info!("...... bytes_since_first={}", bytes_since_first);
 
@@ -366,7 +361,7 @@ impl AsmFS {
                 Ok(()) => {},
                 Err(e) => {
                     error!(".. read_raw() failed to fix header block: {}", e);
-                    reply.error(ENOENT);
+                    reply.error(Errno::ENOENT);
                     return;
                 }
             }

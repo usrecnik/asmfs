@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 use oracle::{Connection, Connector, Error, ErrorKind, Privilege, Row, ResultSet};
-use fuser::{FileType, FileAttr};
+use fuser::{FileType, FileAttr, INodeNo};
 use oracle::sql_type::{OracleType, Timestamp};
 use chrono::{NaiveDate, DateTime, Utc};
 use std::collections::HashMap;
@@ -111,7 +111,7 @@ impl AsmAlias {
 
     pub fn get_file_attr(&self) -> FileAttr {
         FileAttr {
-            ino: self.get_inode().get_ino(),
+            ino: INodeNo(self.get_inode().get_ino()),
             size: self.bytes.unwrap_or(0),
             blocks: self.blocks.unwrap_or(0),   // @todo: this is probably not size in oracle blocks
             atime: UNIX_EPOCH,
@@ -312,7 +312,7 @@ impl OracleConnection {
         let inode = Inode::from_group_number(group_number);
 
         Ok(FileAttr {
-            ino: inode.get_ino(),
+            ino: INodeNo(inode.get_ino()),
             size: 0,
             blocks: 0,
             atime: UNIX_EPOCH,
@@ -332,7 +332,7 @@ impl OracleConnection {
 
     pub fn query_asm_diskgroup_ent_ino(&mut self, ino: u64) -> FileAttr {
         FileAttr {
-            ino: ino,
+            ino: INodeNo(ino),
             size: 0,
             blocks: 0,
             atime: UNIX_EPOCH,
@@ -501,7 +501,7 @@ impl OracleConnection {
         Ok(())
     }
 
-    fn proc_read_int(&self, handle: u64, block_size: u32, offset_in_blocks: i64, amount_in_blocks: u32) -> Result<Vec<u8>, Error> {
+    fn proc_read_int(&self, handle: u64, block_size: u32, offset_in_blocks: u64, amount_in_blocks: u32) -> Result<Vec<u8>, Error> {
         let mut stmt = self.conn.statement("begin dbms_diskgroup.read(:b_handle, :b_offset, :b_length, :b_buffer); end;").build()?;
         let mut amount_in_bytes = block_size * amount_in_blocks;
         let _amount_in_bytes = block_size * amount_in_blocks;
@@ -535,10 +535,10 @@ impl OracleConnection {
         Ok(buffer)
     }
 
-    pub fn proc_read(&self, fh: u64, offset_in_bytes: i64, mut requested_bytes: u32, block_size: u32, size_in_bytes_fs: u64, size_in_bytes_asm: u64, file_type: u32) -> Result<Vec<u8>, Error> {
+    pub fn proc_read(&self, fh: u64, offset_in_bytes: u64, mut requested_bytes: u32, block_size: u32, size_in_bytes_fs: u64, size_in_bytes_asm: u64, file_type: u32) -> Result<Vec<u8>, Error> {
 
         // some files seem to start at index zero, and some seem to start with the first block being 1 instead of 0.
-        let fix: i64 = match file_type {
+        let fix: u64 = match file_type {
             13 => 1, // spfile
             _ => 0 // (2 => datafile), careful, the first block is two bytes different than asmcmd cp; code is not tested with fix=1
         };
@@ -554,18 +554,18 @@ impl OracleConnection {
             debug!(".. proc_read, length was > than bytes_size, thus lowered to {}", requested_bytes);
         }
 
-        let size_in_blocks_fs :i64 = (size_in_bytes_fs / block_size as u64) as i64; // includes trailer block (e.g. for archivelog)
-        let size_in_blocks_asm :i64 = (size_in_bytes_asm / block_size as u64) as i64; // exactly as dbms_diskgroup.read() can handle
+        let size_in_blocks_fs :u64 = size_in_bytes_fs / block_size as u64; // includes trailer block (e.g. for archivelog)
+        let size_in_blocks_asm :u64 = size_in_bytes_asm / block_size as u64 ; // exactly as dbms_diskgroup.read() can handle
         println!(".. size_in_blocks_fs={}, size_in_blocks_asm={}, (size_in_bytes_fs={} / block_size={})", size_in_blocks_fs, size_in_blocks_asm, size_in_bytes_fs, block_size);
 
-        let offset_in_blocks :i64 = offset_in_bytes / block_size as i64;
+        let offset_in_blocks :u64 = offset_in_bytes / block_size as u64;
         println!(".. size_in_blocks={}, offset_in_blocks={}, size_in_bytes_asm={}, file_type={}", size_in_blocks_fs, offset_in_blocks, size_in_bytes_asm, file_type);
         if offset_in_blocks > size_in_blocks_fs {
             println!(".. **offset in blocks bigger than file size in blocks, returning empty buffer");
             return Ok(Vec::<u8>::new());
         }
 
-        let requested_blocks = (requested_bytes as i64 + block_size as i64 - 1) / block_size as i64;  // number of blocks to read
+        let requested_blocks = (requested_bytes as u64 + block_size as u64 - 1) / block_size as u64;  // number of blocks to read
         println!(".. requested_blocks={}", requested_blocks);
 
         let read_step_blocks =
@@ -592,7 +592,7 @@ impl OracleConnection {
                 println!(".... a) amount_in_blocks={} (requested_blocks={} - already_read_blocks={})", amount_in_blocks, requested_blocks, already_read_blocks);
             }
 
-            if offset_in_blocks + amount_in_blocks as i64 >= size_in_blocks_asm { // >= because if file_size=640 then we need to (can) read block 640.
+            if offset_in_blocks + (amount_in_blocks as u64) >= size_in_blocks_asm { // >= because if file_size=640 then we need to (can) read block 640.
                 amount_in_blocks = (size_in_blocks_fs - (offset_in_blocks - fix)) as u32;
                 println!(".... b) amount_in_blocks={} (size_in_blocks={} - (offset_in_blocks={} - fix={}))", amount_in_blocks, size_in_blocks_fs, offset_in_blocks, fix);
             }
@@ -606,8 +606,8 @@ impl OracleConnection {
         // add trailer block (e.g. for archivelog)
         if file_type == FILE_TYPE_ARCHIVELOG_INT {
             if already_read_blocks < requested_blocks as u32 {
-                if offset_in_blocks + already_read_blocks as i64 == size_in_blocks_fs {
-                    println!("... generating trailer block (offset_in_blocks={} + already_read_blocks={} = {} ==?== size_in_blocks_fs={})",  offset_in_blocks, already_read_blocks, offset_in_blocks+already_read_blocks as i64, size_in_blocks_fs);
+                if offset_in_blocks + (already_read_blocks as u64) == size_in_blocks_fs {
+                    println!("... generating trailer block (offset_in_blocks={} + already_read_blocks={} = {} ==?== size_in_blocks_fs={})",  offset_in_blocks, already_read_blocks, offset_in_blocks+(already_read_blocks as u64), size_in_blocks_fs);
                     let trail_vec :Vec<u8> = vec![0xFE; 512];
                     buffer.extend(trail_vec);
                     already_read_blocks += 1;
