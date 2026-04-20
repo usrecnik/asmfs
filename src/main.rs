@@ -65,11 +65,13 @@ fn main() {
 
     let mut cfg = Config::default();
     cfg.acl = SessionACL::Owner;
-    cfg.n_threads = Some(8);
+    cfg.n_threads = Some(8); // @todo: this should be configurable
     cfg.clone_fd = true;
     cfg.mount_options = options;
-    
-    match fuser::mount2(AsmFS::new(mountpoint.clone(), connection_string.cloned(), use_raw, mirror), mountpoint, &cfg) {
+
+    let asmfs = AsmFS::new(mountpoint.clone(), connection_string.cloned(), use_raw, mirror);
+
+    match fuser::mount2(asmfs, mountpoint, &cfg) {
         Ok(_) => {},
         Err(e) => {
             eprintln!("Failed to mount FUSE filesystem: {:?}", e);
