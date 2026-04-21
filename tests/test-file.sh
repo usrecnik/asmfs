@@ -189,7 +189,7 @@ test_3_dd_partial_read() {
   if ! dd if="$fuse" of="$dst_f" bs=$bs skip=$skip_n count=$count_n status=none 2>/dev/null; then
     REASON="dd partial read (FUSE) failed"; return 1
   fi
-  if ! asmcmd cp -- "$asm" "$dst_full" >/dev/null 2>&1; then
+  if ! asmcmd cp "$asm" "$dst_full" >/dev/null 2>&1; then
     REASON="asmcmd cp failed"; return 1
   fi
   if ! dd if="$dst_full" of="$dst_part" bs=$bs skip=$skip_n count=$count_n status=none 2>/dev/null; then
