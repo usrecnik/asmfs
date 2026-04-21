@@ -359,10 +359,10 @@ impl AsmFS {
 
             bytes_read += chunk_len;
         }
-        
+
         if self.magic {
             if offset == 0 && au_first == 0 && MAGIC_FILE_TYPES.contains(&handle.file_type.as_str()) {
-                if let Err(e) = fix_header_block(&mut buffer) {
+                if let Err(e) = fix_header_block2(&mut buffer) {
                     error!(".. read_raw() failed to fix header block: {}", e);
                     reply.error(Errno::ENOENT);
                     return;
@@ -374,6 +374,7 @@ impl AsmFS {
     }
 }
 
+// this works on archive logs
 fn fix_header_block(buffer: &mut Vec<u8>) -> Result<(), Error> {
 
     if buffer.len() < 512 {
@@ -393,5 +394,29 @@ fn fix_header_block(buffer: &mut Vec<u8>) -> Result<(), Error> {
     // Fix metadata at offset 0x20 -> 0x24
     buffer[0x20..0x24].copy_from_slice(&MAGIC_XOR.to_le_bytes());
 
+    Ok(())
+}
+
+// this works on datafiles:
+fn fix_header_block2(buffer: &mut Vec<u8>) -> Result<(), Error> {
+    if buffer.len() < 512 {
+        return Err(Error::new(ErrorKind::Other, "asmfs; archivelog header buffer is less than 512 bytes"));
+    }
+
+    const TARGET_METADATA: u32 = 0x0000_0002;
+
+    let metadata_bytes: [u8; 4] = buffer[0x20..0x24]
+        .try_into()
+        .map_err(|_| Error::new(ErrorKind::Other, "Failed to read metadata 0x20 -> 0x24"))?;
+    let metadata = u32::from_le_bytes(metadata_bytes);
+    let delta = metadata ^ TARGET_METADATA;
+
+    let checksum_bytes: [u8; 4] = buffer[0x10..0x14]
+        .try_into()
+        .map_err(|_| Error::new(ErrorKind::Other, "Failed to read checksum 0x10 -> 0x14"))?;
+    let checksum = u32::from_le_bytes(checksum_bytes) ^ delta;
+    buffer[0x10..0x14].copy_from_slice(&checksum.to_le_bytes());
+
+    buffer[0x20..0x24].copy_from_slice(&TARGET_METADATA.to_le_bytes());
     Ok(())
 }
