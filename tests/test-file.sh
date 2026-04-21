@@ -216,10 +216,10 @@ test_4_rsync_read() {
   local dst_o="$ORIG_DIR/${TAG}.t4.ref"
   rm -f "$dst_r" "$dst_o"
 
-  if ! rsync -a -- "$fuse" "$dst_r" 2>/dev/null; then
+  if ! rsync -a "$fuse" "$dst_r" 2>/dev/null; then
     REASON="rsync first pass failed"; return 1
   fi
-  if ! asmcmd cp -- "$asm" "$dst_o" >/dev/null 2>&1; then
+  if ! asmcmd cp "$asm" "$dst_o" >/dev/null 2>&1; then
     REASON="asmcmd cp failed"; return 1
   fi
   local a b
