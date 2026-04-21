@@ -1,31 +1,28 @@
 #!/usr/bin/env bash
 #
-# test_asmfs.sh — integration test suite for ASMFS (read-only FUSE filesystem
-# exposing Oracle ASM files).
+# test_asmfs.sh — integration tests for a single file on the ASMFS FUSE mount.
+# Designed to be called per-file (e.g. from test-fs.sh's find -exec loop).
 #
 
 set -u
 
 usage() {
   cat <<'EOF'
-Usage: test_asmfs.sh <ASM_PATH> [MOUNTPOINT] [TMPDIR]
+Usage: test_asmfs.sh <FUSE_FILE> [TMPDIR]
 
-Integration test suite for the ASMFS FUSE filesystem. Runs a battery of
-read tests against files exposed through the FUSE mount, cross-checking
-results against `asmcmd cp` output.
+Run the ASMFS integration test battery against a single file on the
+FUSE mount, cross-checking results against `asmcmd cp`.
 
 Arguments:
-  ASM_PATH     ASM path to test, at any level of specificity:
-                 +DATA
-                 +DATA/MYDB
-                 +DATA/MYDB/DATAFILE
-                 +DATA/MYDB/DATAFILE/system.256.1234567890
-               If it resolves to a directory on the FUSE mount, all files
-               under it are tested recursively. The leading `+` is stripped
-               and the remainder is mapped under MOUNTPOINT.
-  MOUNTPOINT   Where asmfs is mounted (default: /mnt/asm).
-  TMPDIR       Scratch directory (default: /tmp/asm_tests). Its ./asmfs and
-               ./orig subfolders are wiped on start and on exit.
+  FUSE_FILE    Absolute path to a regular file on the FUSE mount. The
+               ASM logical name is derived by taking the substring from
+               the first `+` onward, e.g.
+                 /mnt/asm/+DATA/MYDB/DATAFILE/system.256.1234567890
+                   →  +DATA/MYDB/DATAFILE/system.256.1234567890
+  TMPDIR       Scratch directory (default: /tmp/asm_tests). Per-file
+               scratch files are tagged and removed on exit; the
+               directory itself is not wiped, so concurrent per-file
+               invocations don't stomp on each other.
 
 Environment:
   RUN_TESTS    Space-separated list of test numbers to run, e.g. "1 2 3".
@@ -34,17 +31,18 @@ Environment:
 Tests:
   1 basic_copy        cp(FUSE) vs `asmcmd cp`, full-file checksum match.
   2 dd_block_aligned  dd bs=512 vs dd bs=4096 on FUSE, checksum match.
-  3 dd_partial_read   dd skip=N count=M on FUSE vs the same region extracted
-                      from an `asmcmd cp` of the full file.
-  4 rsync_read        rsync(FUSE) vs `asmcmd cp`, plus a rsync no-op check on
-                      a second run (exercises stable FUSE getattr/stat).
+  3 dd_partial_read   dd skip=N count=M on FUSE vs the same region
+                      extracted from an `asmcmd cp` of the full file.
+  4 rsync_read        rsync(FUSE) vs `asmcmd cp`, plus a rsync no-op
+                      check on a second run (exercises stable FUSE
+                      getattr/stat).
 
 Exit codes:
   0  all tests passed or skipped
   1  one or more tests failed
   2  invalid arguments / usage
   3  no checksum tool available (sha256sum or md5sum)
-  4  resolved path not found under the FUSE mount
+  4  FUSE_FILE not a regular file, or ASM logical name not derivable
 EOF
 }
 
@@ -57,22 +55,21 @@ if [[ $# -lt 1 ]]; then
   exit 2
 fi
 
-ASM_ARG="$1"
-MOUNTPOINT="${2:-/mnt/asm}"
-TMPDIR_ARG="${3:-/tmp/asm_tests}"
-
-MOUNTPOINT="${MOUNTPOINT%/}"
+FUSE_FILE="$1"
+TMPDIR_ARG="${2:-/tmp/asm_tests}"
 TMPDIR_ARG="${TMPDIR_ARG%/}"
 
-# Resolve FUSE path from ASM path.
-if [[ "$ASM_ARG" == /* ]]; then
-  FUSE_ROOT="$ASM_ARG"
-else
-  NORM="${ASM_ARG#+}"
-  NORM="${NORM%/}"
-  FUSE_ROOT="$MOUNTPOINT/$NORM"
+if [[ ! -f "$FUSE_FILE" ]]; then
+  echo "ERROR: not a regular file: $FUSE_FILE" >&2
+  exit 4
 fi
-FUSE_ROOT="${FUSE_ROOT%/}"
+
+if [[ "$FUSE_FILE" != *+* ]]; then
+  echo "ERROR: cannot derive ASM logical name from: $FUSE_FILE" >&2
+  echo "       (expected path to contain '+DISKGROUP/...')" >&2
+  exit 4
+fi
+ASM_LOGICAL="+${FUSE_FILE#*+}"
 
 # Pick checksum command.
 if command -v sha256sum >/dev/null 2>&1; then
@@ -91,48 +88,24 @@ HAS_RSYNC=0;  command -v rsync  >/dev/null 2>&1 && HAS_RSYNC=1
 [[ $HAS_ASMCMD -eq 0 ]] && echo "WARN: asmcmd not in PATH — asmcmd-dependent tests will be skipped" >&2
 [[ $HAS_RSYNC  -eq 0 ]] && echo "WARN: rsync not in PATH — rsync tests will be skipped" >&2
 
-# Set up scratch directories.
+# Set up scratch directories (shared across invocations; cleanup is per-tag).
 ASMFS_DIR="$TMPDIR_ARG/asmfs"
 ORIG_DIR="$TMPDIR_ARG/orig"
-rm -rf "$ASMFS_DIR" "$ORIG_DIR"
 mkdir -p "$ASMFS_DIR" "$ORIG_DIR"
-
-cleanup() {
-  rm -rf "$ASMFS_DIR" "$ORIG_DIR"
-}
-trap cleanup EXIT
-
-# Check FUSE mount resolves.
-if [[ ! -e "$FUSE_ROOT" ]]; then
-  echo "ERROR: path does not exist under FUSE mount: $FUSE_ROOT" >&2
-  exit 4
-fi
-
-# Enumerate files.
-if [[ -d "$FUSE_ROOT" ]]; then
-  mapfile -t FILES < <(find "$FUSE_ROOT" -type f 2>/dev/null | LC_ALL=C sort)
-  if [[ ${#FILES[@]} -eq 0 ]]; then
-    echo "WARN: directory contains no files: $FUSE_ROOT" >&2
-    exit 0
-  fi
-else
-  FILES=("$FUSE_ROOT")
-fi
-
-# Convert a FUSE path back to its ASM logical form (+DISKGROUP/...).
-fuse_to_asm() {
-  local p="$1"
-  local rel="${p#"$MOUNTPOINT/"}"
-  printf '+%s\n' "$rel"
-}
-
-checksum() {
-  "$CKSUM" "$1" | awk '{print $1}'
-}
 
 # Derive a safe filename tag from a path (used to namespace scratch files).
 safe_tag() {
   printf '%s' "$1" | tr -c 'A-Za-z0-9._+' '_'
+}
+TAG=$(safe_tag "$ASM_LOGICAL")
+
+cleanup() {
+  rm -f "$ASMFS_DIR/${TAG}."* "$ORIG_DIR/${TAG}."*
+}
+trap cleanup EXIT
+
+checksum() {
+  "$CKSUM" "$1" | awk '{print $1}'
 }
 
 # Test functions set REASON to describe SKIP/FAIL outcomes.
@@ -149,9 +122,8 @@ test_1_basic_copy() {
   if [[ $HAS_ASMCMD -eq 0 ]]; then
     REASON="asmcmd not in PATH"; return 2
   fi
-  local tag; tag=$(safe_tag "$asm")
-  local dst_f="$ASMFS_DIR/${tag}.t1"
-  local dst_o="$ORIG_DIR/${tag}.t1"
+  local dst_f="$ASMFS_DIR/${TAG}.t1"
+  local dst_o="$ORIG_DIR/${TAG}.t1"
   rm -f "$dst_f" "$dst_o"
   if ! cp -- "$fuse" "$dst_f" 2>/dev/null; then
     REASON="cp from FUSE failed"; return 1
@@ -170,9 +142,8 @@ test_1_basic_copy() {
 
 test_2_dd_block_aligned() {
   local fuse="$1" asm="$2"
-  local tag; tag=$(safe_tag "$asm")
-  local dst_a="$ASMFS_DIR/${tag}.t2.512"
-  local dst_b="$ASMFS_DIR/${tag}.t2.4k"
+  local dst_a="$ASMFS_DIR/${TAG}.t2.512"
+  local dst_b="$ASMFS_DIR/${TAG}.t2.4k"
   rm -f "$dst_a" "$dst_b"
   if ! dd if="$fuse" of="$dst_a" bs=512  status=none 2>/dev/null; then
     REASON="dd bs=512 failed";  return 1
@@ -210,10 +181,9 @@ test_3_dd_partial_read() {
     count_n=$(( total - skip_n ))
   fi
 
-  local tag; tag=$(safe_tag "$asm")
-  local dst_f="$ASMFS_DIR/${tag}.t3.part"
-  local dst_full="$ORIG_DIR/${tag}.t3.full"
-  local dst_part="$ORIG_DIR/${tag}.t3.part"
+  local dst_f="$ASMFS_DIR/${TAG}.t3.part"
+  local dst_full="$ORIG_DIR/${TAG}.t3.full"
+  local dst_part="$ORIG_DIR/${TAG}.t3.part"
   rm -f "$dst_f" "$dst_full" "$dst_part"
 
   if ! dd if="$fuse" of="$dst_f" bs=$bs skip=$skip_n count=$count_n status=none 2>/dev/null; then
@@ -242,9 +212,8 @@ test_4_rsync_read() {
   if [[ $HAS_ASMCMD -eq 0 ]]; then
     REASON="asmcmd not in PATH"; return 2
   fi
-  local tag; tag=$(safe_tag "$asm")
-  local dst_r="$ASMFS_DIR/${tag}.t4.rsync"
-  local dst_o="$ORIG_DIR/${tag}.t4.ref"
+  local dst_r="$ASMFS_DIR/${TAG}.t4.rsync"
+  local dst_o="$ORIG_DIR/${TAG}.t4.ref"
   rm -f "$dst_r" "$dst_o"
 
   if ! rsync -a -- "$fuse" "$dst_r" 2>/dev/null; then
@@ -306,53 +275,26 @@ is_selected() {
   return 1
 }
 
-FILES_TESTED=0
-TESTS_RUN=0
-PASSED=0
 FAILED=0
-SKIPPED=0
-FAILURES=()
 
-for fuse in "${FILES[@]}"; do
-  asm=$(fuse_to_asm "$fuse")
-  echo "=== $asm ==="
-  FILES_TESTED=$(( FILES_TESTED + 1 ))
+echo "=== $ASM_LOGICAL ==="
 
-  for entry in "${TESTS[@]}"; do
-    IFS='|' read -r num tname func <<<"$entry"
-    is_selected "$num" || continue
-    TESTS_RUN=$(( TESTS_RUN + 1 ))
-    REASON=""
-    t0=$SECONDS
-    "$func" "$fuse" "$asm"
-    rc=$?
-    dur=$(( SECONDS - t0 ))
-    printf "[TEST %s] %-18s ... " "$num" "$tname"
-    case $rc in
-      0) printf "PASS (%ds)\n" "$dur"
-         PASSED=$(( PASSED + 1 )) ;;
-      2) printf "SKIP — %s\n" "${REASON:-(no reason)}"
-         SKIPPED=$(( SKIPPED + 1 )) ;;
-      *) printf "FAIL — %s (%ds)\n" "${REASON:-unknown}" "$dur"
-         FAILED=$(( FAILED + 1 ))
-         FAILURES+=("$asm — TEST $num: ${REASON:-unknown}") ;;
-    esac
-  done
+for entry in "${TESTS[@]}"; do
+  IFS='|' read -r num tname func <<<"$entry"
+  is_selected "$num" || continue
+  REASON=""
+  t0=$SECONDS
+  "$func" "$FUSE_FILE" "$ASM_LOGICAL"
+  rc=$?
+  dur=$(( SECONDS - t0 ))
+  printf "[TEST %s] %-18s ... " "$num" "$tname"
+  case $rc in
+    0) printf "PASS (%ds)\n" "$dur" ;;
+    2) printf "SKIP — %s\n" "${REASON:-(no reason)}" ;;
+    *) printf "FAIL — %s (%ds)\n" "${REASON:-unknown}" "$dur"
+       FAILED=$(( FAILED + 1 )) ;;
+  esac
 done
-
-echo "=========================================="
-echo "FILES TESTED : $FILES_TESTED"
-echo "TESTS RUN    : $TESTS_RUN"
-echo "PASSED       : $PASSED"
-echo "FAILED       : $FAILED"
-echo "SKIPPED      : $SKIPPED"
-echo "=========================================="
-if [[ ${#FAILURES[@]} -gt 0 ]]; then
-  echo "Failed tests:"
-  for f in "${FAILURES[@]}"; do
-    echo "  $f"
-  done
-fi
 
 [[ $FAILED -gt 0 ]] && exit 1
 exit 0
