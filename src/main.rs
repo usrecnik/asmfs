@@ -35,10 +35,22 @@ fn main() {
                 .help("Use DBMS_DISKGROUP.READ() instead of raw device access")
         )
         .arg(
+            Arg::new("--no-magic")
+                .long("no-magic")
+                .action(ArgAction::SetTrue)
+                .help("Do not change magic bytes in first block of files (default: do change magic bytes)")
+        )
+        .arg(
             Arg::new("mirror")
                 .long("mirror")
                 .default_value("0")
                 .help("0=>primary copy, 1=>first redundant copy, 2=>second redundant copy"),
+        )
+        .arg(
+            Arg::new("threads")
+                .long("threads")
+                .default_value("8")
+                .help("Number of threads for fuse operations (default: 8)"),
         )
         .arg(
             Arg::new("auto-unmount")
@@ -51,8 +63,11 @@ fn main() {
     let connection_string = matches.get_one::<String>("conn");
     let mountpoint = matches.get_one::<String>("MOUNT_POINT").unwrap();
     let use_raw = !matches.get_flag("no-raw");
+    let magic = !matches.get_flag("no-magic");
     let mirror = matches.get_one::<String>("mirror").map(|s| s.as_str()).unwrap_or("0");
     let mirror: u8 = mirror.parse().unwrap_or(0);
+    let threads = matches.get_one::<String>("threads").unwrap();
+    let threads: usize = threads.parse().unwrap_or(8);
 
     let mut options = vec![MountOption::RO, MountOption::FSName("asmfs".to_string())];
     if matches.get_flag("auto-unmount") {
@@ -65,11 +80,11 @@ fn main() {
 
     let mut cfg = Config::default();
     cfg.acl = SessionACL::Owner;
-    cfg.n_threads = Some(8); // @todo: this should be configurable
+    cfg.n_threads = Some(threads);
     cfg.clone_fd = true;
     cfg.mount_options = options;
 
-    let asmfs = AsmFS::new(mountpoint.clone(), connection_string.cloned(), use_raw, mirror);
+    let asmfs = AsmFS::new(mountpoint.clone(), connection_string.cloned(), use_raw, magic, mirror);
 
     match fuser::mount2(asmfs, mountpoint, &cfg) {
         Ok(_) => {},

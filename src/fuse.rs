@@ -37,11 +37,12 @@ pub struct AsmFS {
     handles_dbms: Mutex<HashMap<u64, OpenFileHandle>>,
     handles_raw: RwLock<HashMap<u64, Arc<RawOpenFileHandle>>>,
     use_raw: bool,  // read only after init
-    mirror: u8  // read only after init
+    mirror: u8,     // read only after init
+    magic: bool     // read only after init
 }
 
 impl AsmFS {
-    pub fn new(mut mount_point: String, connection_string: Option<String>, use_raw: bool, mirror: u8) -> Self {
+    pub fn new(mut mount_point: String, connection_string: Option<String>, use_raw: bool, magic: bool, mirror: u8) -> Self {
         if !mount_point.ends_with("/") {
             mount_point.push('/');
         }
@@ -62,7 +63,8 @@ impl AsmFS {
             handles_dbms: Mutex::new(HashMap::new()),
             handles_raw: RwLock::new(HashMap::new()),
             use_raw,
-            mirror }
+            mirror,
+            magic }
     }
 }
 
@@ -357,12 +359,14 @@ impl AsmFS {
 
             bytes_read += chunk_len;
         }
-
-        if offset == 0 && au_first == 0 && MAGIC_FILE_TYPES.contains(&handle.file_type.as_str()) {
-            if let Err(e) = fix_header_block(&mut buffer) {
-                error!(".. read_raw() failed to fix header block: {}", e);
-                reply.error(Errno::ENOENT);
-                return;
+        
+        if self.magic {
+            if offset == 0 && au_first == 0 && MAGIC_FILE_TYPES.contains(&handle.file_type.as_str()) {
+                if let Err(e) = fix_header_block(&mut buffer) {
+                    error!(".. read_raw() failed to fix header block: {}", e);
+                    reply.error(Errno::ENOENT);
+                    return;
+                }
             }
         }
 
