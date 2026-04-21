@@ -35,7 +35,7 @@ fn main() {
                 .help("Use DBMS_DISKGROUP.READ() instead of raw device access")
         )
         .arg(
-            Arg::new("--no-magic")
+            Arg::new("no-magic")
                 .long("no-magic")
                 .action(ArgAction::SetTrue)
                 .help("Do not change magic bytes in first block of files (default: do change magic bytes)")
