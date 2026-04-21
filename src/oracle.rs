@@ -468,6 +468,11 @@ impl OracleConnection {
         let au_list = self.query_extent_map(group_number, file_number, mirror)?;
         let au_size = self.query_au_size(group_number)?;
 
+        if au_list.is_empty() {
+            return Err(Error::new(ErrorKind::Other, format!("No extent map found for file number {}, group {}", file_number, group_number)));
+        }
+
+
         let disk_list :HashMap<u16, String> = self.query_asm_disks(group_number)?;
        
         let disk_list_open :HashMap<u16, File> = disk_list
