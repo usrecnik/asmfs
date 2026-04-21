@@ -128,7 +128,7 @@ test_1_basic_copy() {
   if ! cp -- "$fuse" "$dst_f" 2>/dev/null; then
     REASON="cp from FUSE failed"; return 1
   fi
-  if ! asmcmd cp -- "$asm" "$dst_o" >/dev/null 2>&1; then
+  if ! asmcmd cp "$asm" "$dst_o" >/dev/null 2>&1; then
     REASON="asmcmd cp failed"; return 1
   fi
   local a b
