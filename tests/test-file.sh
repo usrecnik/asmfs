@@ -125,7 +125,7 @@ test_1_basic_copy() {
   local dst_f="$ASMFS_DIR/${TAG}.t1"
   local dst_o="$ORIG_DIR/${TAG}.t1"
   rm -f "$dst_f" "$dst_o"
-  if ! cp -- "$fuse" "$dst_f" 2>/dev/null; then
+  if ! cp "$fuse" "$dst_f" 2>/dev/null; then
     REASON="cp from FUSE failed"; return 1
   fi
   if ! asmcmd cp "$asm" "$dst_o" >/dev/null 2>&1; then
