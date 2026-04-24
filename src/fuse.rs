@@ -11,7 +11,8 @@ use oracle::{Error, ErrorKind};
 
 const TTL: Duration = Duration::from_secs(60); // 1 minute
 
-const MAGIC_FILE_TYPES: &[&str] = &["ARCHIVELOG", "DATAFILE", "TEMPFILE", "CONTROLFILE"];
+const MAGIC_FILE_TYPES: &[&str] = &["ARCHIVELOG", "DATAFILE", "CONTROLFILE"];
+// TEMPFILEs needs no fix.
 
 struct OpenFileHandle {
     conn: OracleConnection,

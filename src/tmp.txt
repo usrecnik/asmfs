@@ -1,0 +1,80 @@
+[2026-04-21T12:21:21Z INFO  asmfs::oracle] query_asm_alias_ent(name=pwdasm.256.1223902301, size=2560)
+[2026-04-21T12:21:21Z INFO  asmfs::fuse] open(ino=144115183780888735)
+
+===
+
+## What happened
+
+The panic is at `src/fuse.rs:350`:
+
+```rust
+let au_entry = handle.au_list[au_index as usize];
+```
+
+with `len == 0, index == 0`. So `handle.au_list` is **empty**, and the very first iteration of the `for au_index in au_first..=au_last` loop tries to read `au_list[0]`.
+
+### Walking the preconditions
+
+Work backwards from the panic to see what had to be true:
+
+1. **The early-return at `src/fuse.rs:324` did not fire.** That means the clamped `size > 0`:
+   - If `offset + bytes_requested <= file_size_bytes`, then `size == bytes_requested` (>0 since FUSE wouldn't call read with 0).
+   - Otherwise `size == file_size_bytes.saturating_sub(offset)`, which is >0 only when `file_size_bytes > offset`.
+   - Either way: **`file_size_bytes > 0`**.
+
+2. **`au_first == 0`.** Since `au_first = offset / au_size`, this just means `offset < au_size` — typical for the first read of a file. (Also implies `au_size > 0`; a zero `au_size` would have killed us on the division, not on the index.)
+
+3. **`au_list.len() == 0`.**
+
+Combining 1 and 3: the `RawOpenFileHandle` is internally inconsistent — **it claims the file has nonzero bytes, but has no extent map entries to read those bytes from**.
+
+### Where the inconsistency comes from
+
+Look at `proc_open_raw` in `src/oracle.rs:460`:
+
+```rust
+let file_size_bytes = row.get("BYTES")?;                                    // line 464
+...
+let au_list = self.query_extent_map(group_number, file_number, mirror)?;    // line 468
+```
+
+`file_size_bytes` and `au_list` are fetched in two separate queries. If `query_extent_map` **succeeds with an empty `Vec`** (not an error, just no rows), we happily build a `RawOpenFileHandle { au_list: vec![], file_size_bytes: >0, ... }` at lines 487–493 and stash it in `handles_raw`. `open()` returns success. The first `read()` then hits line 350 and panics.
+
+Plausible reasons `query_extent_map` comes back empty for a non-empty file:
+
+- The `mirror` argument doesn't match how this file is actually mirrored (e.g. asking for mirror side 2 on a file that only has side 1). The SQL filter matches no rows.
+- A race: the file was dropped/renamed between the alias lookup and the extent query.
+- Transient metadata visibility for a freshly created file.
+- Some SQL filter in `query_extent_map` excluding this particular `file_number`/`group_number`.
+
+Because the thread that panicked is `fuser-2` (a FUSE worker), the panic tears down the FUSE session — which is why you see it in the trace, not just a quiet error.
+
+### Related latent hazards in `read_raw` (not the cause, but worth noting)
+
+- `src/fuse.rs:351`: `handle.disk_list.get(&au_entry.0).unwrap()` — same pattern: panics if a disk referenced by an AU entry is missing from `disk_list`.
+- `src/fuse.rs:356`: `.expect("read_exact_at() failed")` — any transient read error on the raw device also crashes the worker instead of returning `EIO` to the kernel.
+
+## How I'd fix it
+
+Two layers:
+
+1. **Root cause** — in `proc_open_raw` (`src/oracle.rs:487`), before constructing `RawOpenFileHandle`, reject the inconsistency:
+   ```rust
+   if file_size_bytes > 0 && au_list.is_empty() {
+       return Err(Error::new(ErrorKind::Other,
+           format!("empty extent map for file_number={} group_number={} mirror={} (size={})",
+                   file_number, group_number, mirror, file_size_bytes)));
+   }
+   ```
+   That turns the bug into a clean `open()` failure (`ENOENT` via the existing error path) with a log line that names the file, instead of killing the FUSE thread. It also points at whether `mirror` is the culprit.
+
+2. **Defense in depth** — in `read_raw` (`src/fuse.rs:304`), replace the three panic sites with error replies:
+   - `handle.au_list[au_index as usize]` → `handle.au_list.get(au_index as usize)`, on `None` log + `reply.error(Errno::EIO)`.
+   - `handle.disk_list.get(&au_entry.0).unwrap()` → same treatment.
+   - `.expect("read_exact_at() failed")` → on `Err`, log + `reply.error(Errno::EIO)`.
+
+   A FUSE filesystem should never panic the worker on bad server-side metadata or a flaky read; it should surface an errno.
+
+Optionally worth investigating separately: why `query_extent_map` returned empty in your case. If you can share the file path / ASM file number / `mirror` value that was being opened when it crashed, that's the next thread to pull — is it a non-mirrored file opened with `--mirror=2`, or something else?
+
+Want me to apply fix (1), fix (2), or both?
