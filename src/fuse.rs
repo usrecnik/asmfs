@@ -12,9 +12,10 @@ use oracle::{Error, ErrorKind};
 const TTL: Duration = Duration::from_secs(60); // 1 minute
 
 const MAGIC_FILE_TYPES: &[(&str, u32, u32, u32)] = &[  // file_type, magic_constant, version min, version max
-        ("ARCHIVELOG",  0x0000_81A0,     0,  19999), // not needed since, at last 23.26.1 onward
+        ("ARCHIVELOG",  0x0000_81A0,     0,  19999), // not needed since, at last 23.26.1 onward (19c only)
         ("DATAFILE",    0x0000_81A0,     0,  19999), // <= 19c
         ("DATAFILE",    0x0000_0002, 20000, 999999), // >= 26ai
+        ("TEMPFILE",    0x0000_81A0,     0,  19999), // not needed since, at last 23.26.1 onward (19c only)
         ("CONTROLFILE", 0x0000_0002,     0, 999999)
 ];
 // TEMPFILEs needs no fix.

@@ -5,6 +5,7 @@ the correct data was returned.
 |------------|---------|---------|---------------------------------------------|
 | ARCHIVELOG | ✔       | ✔       | 26ai does not use magic                     |
 | DATAFILE   | ✔       | ✔       | Different magic (samo algo) on each version |
+| TEMPFILE   | ✔       | ✔       | 26ai does not use magic                     |
 
 
 
