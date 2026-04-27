@@ -198,7 +198,7 @@ impl OracleConnection {
         let query = format!(r#"
             select {}, {}
                 from v$asm_alias a
-                left join v$asm_file f on f.file_number = a.file_number
+                left join v$asm_file f on f.file_number = a.file_number and f.group_number = a.group_number
                 where a.parent_index = :1
                     and a.name = :2
         "#, ASM_ALIAS_COLUMNS, ASM_FILE_COLUMNS);
