@@ -27,7 +27,8 @@ pub struct RawOpenFileHandle {
     pub(crate) au_size: u32,
     pub(crate) file_size_bytes: u64,
     pub(crate) file_type: String, // as seen in v$asm_file.type
-    pub(crate) disk_list: HashMap<u16, File> // disk_number => open file handle of (e.g. /dev/sdc)
+    pub(crate) disk_list: HashMap<u16, File>, // disk_number => open file handle of (e.g. /dev/sdc)
+    pub(crate) file_number: u32 // this is for debugging purposes
 }
 
 struct AsmAlias {
@@ -498,7 +499,8 @@ impl OracleConnection {
             au_size,
             file_size_bytes,
             file_type,
-            disk_list: disk_list_open
+            disk_list: disk_list_open,
+            file_number
         };
 
         Ok(retval)

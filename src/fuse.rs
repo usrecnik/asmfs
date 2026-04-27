@@ -252,12 +252,14 @@ impl AsmFS {
         let h = self.ora.lock().unwrap().proc_open_raw(ino, self.mirror);
         match h {
             Ok(handle) => {
+                let file_number :u32 = handle.file_number;
+
                 self.handles_raw
                     .write()
                     .unwrap()
                     .insert(ino, Arc::new(handle));
 
-                debug!(".. open() ok, fh={}", ino);
+                debug!(".. open() ok, fh={}, file_number={}", ino, file_number);
                 reply.opened(FileHandle(ino), FopenFlags::empty());
             },
             Err(e) => {
@@ -338,7 +340,7 @@ impl AsmFS {
         let mut bytes_read: usize = 0;
 
         if au_last as usize >= handle.au_list.len() {
-            error!("AU {} not found in extent map (map len={})", au_last, handle.au_list.len());
+            error!("AU {} not found in extent map (map len={}, file_number={})", au_last, handle.au_list.len(), handle.file_number);
             reply.error(Errno::EIO);
             return;
         }
