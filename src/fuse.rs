@@ -11,8 +11,13 @@ use oracle::{Error, ErrorKind};
 
 const TTL: Duration = Duration::from_secs(60); // 1 minute
 
-const MAGIC_FILE_TYPES: &[&str] = &["ARCHIVELOG", "DATAFILE", "CONTROLFILE"];
+const MAGIC_FILE_TYPES: &[(&str, u32, u32, u32)] = &[  // file_type, magic_constant, version min, version max
+        ("ARCHIVELOG",  0x0000_81A0, 0, 19999), // not needed since, at last 23.26.1 onward
+        ("DATAFILE",    0x0000_0002, 0, 999999),
+        ("CONTROLFILE", 0x0000_0002, 0, 999999)
+];
 // TEMPFILEs needs no fix.
+// ARCHIVELOG in 26ai needs no fix.
 
 struct OpenFileHandle {
     conn: OracleConnection,
@@ -39,7 +44,8 @@ pub struct AsmFS {
     handles_raw: RwLock<HashMap<u64, Arc<RawOpenFileHandle>>>,
     use_raw: bool,  // read only after init
     mirror: u8,     // read only after init
-    magic: bool     // read only after init
+    magic: bool,    // read only after init
+    oracle_version: u32 // only written in constructor
 }
 
 impl AsmFS {
@@ -57,6 +63,14 @@ impl AsmFS {
             }
         };
 
+        let oracle_version: u32 = match ora.query_oracle_version() {
+            Ok(version) => version,
+            Err(e) => {
+                error!("Unable to query oracle major version: {}", e);
+                std::process::exit(1);
+            }
+        };
+
         AsmFS {
             ora: Mutex::new(ora),
             connection_string,
@@ -65,7 +79,8 @@ impl AsmFS {
             handles_raw: RwLock::new(HashMap::new()),
             use_raw,
             mirror,
-            magic }
+            magic,
+            oracle_version}
     }
 }
 
@@ -369,9 +384,11 @@ impl AsmFS {
             bytes_read += chunk_len;
         }
 
-        if self.magic {
-            if offset == 0 && au_first == 0 && MAGIC_FILE_TYPES.contains(&handle.file_type.as_str()) {
-                if let Err(e) = fix_header_block2(&mut buffer) {
+        if self.magic && offset == 0 && au_first == 0 {
+            if let Some((_, magic_constant, _, _)) = MAGIC_FILE_TYPES.iter().find(|(file_type, _, ver_min, ver_max)|
+                *file_type == handle.file_type.as_str() && (&self.oracle_version >= ver_min && &self.oracle_version <= ver_max)
+            ) {
+                if let Err(e) = fix_header_block(&mut buffer, *magic_constant) {
                     error!(".. read_raw() failed to fix header block: {}", e);
                     reply.error(Errno::ENOENT);
                     return;
@@ -383,42 +400,20 @@ impl AsmFS {
     }
 }
 
-// this works on archive logs
-fn _fix_header_block(buffer: &mut Vec<u8>) -> Result<(), Error> {
-
-    if buffer.len() < 512 {
-        return Err(Error::new(ErrorKind::Other, "asmfs; archivelog header buffer is less than 512 bytes"));
-    }
-
-    // Fix checksum at 0x10 -> 0x14
-    const MAGIC_XOR: u32 = 0x0000_81a0;
-
-    let checksum_bytes: [u8; 4] = buffer[0x10..0x14]
-        .try_into()
-        .map_err(|_| Error::new(ErrorKind::Other, "Failed to read checksum 0x10 -> 0x14"))?;
-
-    let checksum = u32::from_le_bytes(checksum_bytes) ^ MAGIC_XOR;
-    buffer[0x10..0x14].copy_from_slice(&checksum.to_le_bytes());
-
-    // Fix metadata at offset 0x20 -> 0x24
-    buffer[0x20..0x24].copy_from_slice(&MAGIC_XOR.to_le_bytes());
-
-    Ok(())
-}
-
 // this works on datafiles:
-fn fix_header_block2(buffer: &mut Vec<u8>) -> Result<(), Error> {
+fn fix_header_block(buffer: &mut Vec<u8>, target_metadata: u32) -> Result<(), Error> {
+
+    info!("Fixing header block with target_metadata: 0x{:08X}", target_metadata);
+
     if buffer.len() < 512 {
         return Err(Error::new(ErrorKind::Other, "asmfs; archivelog header buffer is less than 512 bytes"));
     }
-
-    const TARGET_METADATA: u32 = 0x0000_0002;
 
     let metadata_bytes: [u8; 4] = buffer[0x20..0x24]
         .try_into()
         .map_err(|_| Error::new(ErrorKind::Other, "Failed to read metadata 0x20 -> 0x24"))?;
     let metadata = u32::from_le_bytes(metadata_bytes);
-    let delta = metadata ^ TARGET_METADATA;
+    let delta = metadata ^ target_metadata;
 
     let checksum_bytes: [u8; 4] = buffer[0x10..0x14]
         .try_into()
@@ -426,6 +421,6 @@ fn fix_header_block2(buffer: &mut Vec<u8>) -> Result<(), Error> {
     let checksum = u32::from_le_bytes(checksum_bytes) ^ delta;
     buffer[0x10..0x14].copy_from_slice(&checksum.to_le_bytes());
 
-    buffer[0x20..0x24].copy_from_slice(&TARGET_METADATA.to_le_bytes());
+    buffer[0x20..0x24].copy_from_slice(&target_metadata.to_le_bytes());
     Ok(())
 }

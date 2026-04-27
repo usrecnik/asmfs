@@ -169,6 +169,16 @@ impl OracleConnection {
         }
     }
 
+    fn select_oracle_version(&self) -> Result<Row, Error> {
+        let query = r#"
+            SELECT TO_NUMBER(REGEXP_SUBSTR(version_full, '\d+', 1, 1)) * 1000
+                   + TO_NUMBER(REGEXP_SUBSTR(version_full, '\d+', 1, 2)) AS version_num
+                FROM v$instance
+        "#;  // 19030 for 19.30.0.0
+             // 23026 for 23.26.1.0.0
+        self.conn.query_row(query, &[])
+    }
+
     fn select_diskgroup_all(&self) -> Result<ResultSet<'_,Row>, Error> {
         let query = r#"
             select group_number, '+' || name as name from v$asm_diskgroup order by name
@@ -307,6 +317,12 @@ impl OracleConnection {
             retval.push((inode.get_ino(), FileType::Directory, name));
         }
         Ok(retval)
+    }
+
+    pub fn query_oracle_version(&self) -> Result<u32, Error> {
+        let row = self.select_oracle_version()?;
+        let major_version: String = row.get(0)?;
+        Ok(major_version.parse::<u32>()?)
     }
 
     pub fn query_asm_diskgroup_ent_name(&self, name: &str) -> Result<FileAttr, Error> {
