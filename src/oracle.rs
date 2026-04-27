@@ -220,7 +220,8 @@ impl OracleConnection {
         let query = r#"
             SELECT
                 x.disk_kffxp AS disk_number,
-                x.au_kffxp AS allocation_unit
+                x.au_kffxp AS allocation_unit,
+                x.size_kffxp AS extent_size
             FROM x$kffxp x
             WHERE x.group_kffxp = :1
                 AND x.number_kffxp = :2
@@ -274,9 +275,12 @@ impl OracleConnection {
         for r in rs {
             let row = r?;
             let disk_number :u16 = row.get(0)?;
-            let allocation_unit :u32 = row.get(1)?;
+            let start_au: u32 = row.get(1)?;
+            let extent_size: u32 = row.get(2)?; // number of AUs in this extent
 
-            retval.push((disk_number, allocation_unit));
+            for i in 0..extent_size {
+                retval.push((disk_number, start_au + i));
+            }
         }
         Ok(retval)
     }

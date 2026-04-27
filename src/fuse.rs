@@ -337,6 +337,12 @@ impl AsmFS {
         let mut buffer = vec![0u8; size];
         let mut bytes_read: usize = 0;
 
+        if au_last as usize >= handle.au_list.len() {
+            error!("AU {} not found in extent map (map len={})", au_last, handle.au_list.len());
+            reply.error(Errno::EIO);
+            return;
+        }
+
         for au_index in au_first..=au_last {
             let first_byte: u32 = if au_index == au_first {
                 (offset % au_size) as u32
@@ -376,7 +382,7 @@ impl AsmFS {
 }
 
 // this works on archive logs
-fn fix_header_block(buffer: &mut Vec<u8>) -> Result<(), Error> {
+fn _fix_header_block(buffer: &mut Vec<u8>) -> Result<(), Error> {
 
     if buffer.len() < 512 {
         return Err(Error::new(ErrorKind::Other, "asmfs; archivelog header buffer is less than 512 bytes"));
