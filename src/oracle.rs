@@ -19,8 +19,11 @@ pub struct OracleConnection {
 }
 
 const ASM_ALIAS_COLUMNS: &str = "a.reference_index, a.alias_index, a.file_number, a.name, a.alias_directory, a.system_created";
-const ASM_FILE_COLUMNS: &str = "f.bytes, f.blocks, f.creation_date, f.modification_date, f.type";
+const ASM_FILE_COLUMNS: &str = "f.bytes, f.blocks, f.creation_date, f.modification_date, f.type, f.striped";
 const FILE_TYPE_ARCHIVELOG_INT: u32 = 4;
+
+pub const ASM_STRIPED_COARSE :u8 = 0;
+pub const ASM_STRIPED_FINE :u8 = 1;
 
 pub struct RawOpenFileHandle {
     pub(crate) au_list: Vec<(u16, u32)>, // disk_number, allocation_unit
@@ -28,7 +31,8 @@ pub struct RawOpenFileHandle {
     pub(crate) file_size_bytes: u64,
     pub(crate) file_type: String, // as seen in v$asm_file.type
     pub(crate) disk_list: HashMap<u16, File>, // disk_number => open file handle of (e.g. /dev/sdc)
-    pub(crate) file_number: u32 // this is for debugging purposes
+    pub(crate) file_number: u32, // this is for debugging purposes
+    pub(crate) striped: u8       // v$asm_file.striped => const ASM_STRIPED_COARSE, ASM_STRIPED_FINE
 }
 
 struct AsmAlias {
@@ -59,7 +63,7 @@ impl AsmAlias {
             bytes: row.get("BYTES")?,
             blocks: row.get("BLOCKS")?,
             creation_date: row.get("CREATION_DATE")?,
-            modification_date: row.get("MODIFICATION_DATE")?,
+            modification_date: row.get("MODIFICATION_DATE")?
         })
     }
 
@@ -74,7 +78,7 @@ impl AsmAlias {
             bytes: Option::None,
             blocks: Option::None,
             creation_date: Option::None,
-            modification_date: Option::None,
+            modification_date: Option::None
         })
     }
 
@@ -484,7 +488,14 @@ impl OracleConnection {
         let file_number :u32 = row.get("FILE_NUMBER")?;
         let file_size_bytes = row.get("BYTES")?;
         let file_type :String = row.get("TYPE")?;
+        let striped :String = row.get("STRIPED")?;
         let group_number = inode._get_group_number();
+
+        let striped :u8 = match striped.as_str() {
+            "COARSE" => ASM_STRIPED_COARSE,
+            "FINE" => ASM_STRIPED_FINE,
+            _ => return Err(Error::new(ErrorKind::Other, format!("Invalid striped value '{}' for file_no={}, group={} ", striped, file_number, group_number))),
+        };
 
         let au_list = self.query_extent_map(group_number, file_number, mirror)?;
         let au_size = self.query_au_size(group_number)?;
@@ -516,7 +527,8 @@ impl OracleConnection {
             file_size_bytes,
             file_type,
             disk_list: disk_list_open,
-            file_number
+            file_number,
+            striped
         };
 
         Ok(retval)

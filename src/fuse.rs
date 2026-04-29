@@ -5,7 +5,7 @@ use std::time::{Duration, UNIX_EPOCH};
 use std::os::unix::fs::FileExt;
 use std::sync::{Arc, Mutex, RwLock};
 use log::{debug, info, error}; // debug
-use crate::oracle::{OracleConnection, RawOpenFileHandle};
+use crate::oracle::{OracleConnection, RawOpenFileHandle, ASM_STRIPED_COARSE, ASM_STRIPED_FINE};
 use oracle::{Error, ErrorKind};
 
 
@@ -182,7 +182,22 @@ impl Filesystem for AsmFS {
     fn read(&self, _req: &Request, ino: INodeNo, fh: FileHandle, offset: u64, size: u32, _flags: OpenFlags, _lock: Option<LockOwner>, reply: ReplyData) {
         // info!("read(ino={}, _fh={}, offset={}, _size={}, flags={})", ino, fh, offset, size, _flags);
         if self.use_raw {
-            self.read_raw(_req, ino.0, fh.0, offset, size, _flags, _lock, reply);
+            let handle = {
+                let guard = self.handles_raw.read().unwrap();
+                match guard.get(&fh.0) {
+                    Some(h) => Arc::clone(h),
+                    None => {reply.error(Errno::EBADF); return;}
+                }
+            };
+
+            if handle.striped == ASM_STRIPED_COARSE {
+                self.read_raw_coarse(handle, offset, size, reply);
+            } else if handle.striped == ASM_STRIPED_FINE {
+                self.read_raw_fine(handle, offset, size, reply);
+            } else {
+                error!("Unsupported stripped mode: {}", handle.striped);
+                reply.error(Errno::EINVAL);
+            }
         } else {
             self.read_dbms(_req, ino.0, fh.0, offset, size, _flags, _lock, reply);
         }
@@ -323,14 +338,12 @@ impl AsmFS {
         }
     }
 
-    fn read_raw(&self, _req: &Request, _ino: u64, fh: u64, offset: u64, bytes_requested: u32, _flags: OpenFlags, _lock: Option<LockOwner>, reply: ReplyData) {
-        let handle = {
-            let guard = self.handles_raw.read().unwrap();
-            match guard.get(&fh) {
-                Some(h) => Arc::clone(h),
-                None => {reply.error(Errno::EBADF); return;}
-            }
-        };
+    fn read_raw_fine(&self, _handle: Arc<RawOpenFileHandle>, _offset: u64, _bytes_requested: u32, reply: ReplyData) {
+        error!("read_raw_fine() not implemented");
+        reply.error(Errno::ENOSYS);
+    }
+
+    fn read_raw_coarse(&self, handle: Arc<RawOpenFileHandle>, offset: u64, bytes_requested: u32, reply: ReplyData) {
 
         // clamp requested size to file size
         let size: usize = {
