@@ -338,9 +338,59 @@ impl AsmFS {
         }
     }
 
-    fn read_raw_fine(&self, _handle: Arc<RawOpenFileHandle>, _offset: u64, _bytes_requested: u32, reply: ReplyData) {
-        error!("read_raw_fine() not implemented");
-        reply.error(Errno::ENOSYS);
+    fn read_raw_fine(&self, handle: Arc<RawOpenFileHandle>, offset: u64, bytes_requested: u32, reply: ReplyData) {
+        // clamp requested size to file size
+        let size: usize = {
+            let s = bytes_requested as u64;
+            let clamped = if offset + s > handle.file_size_bytes {
+                handle.file_size_bytes.saturating_sub(offset)
+            } else {
+                s
+            };
+            clamped as usize
+        };
+
+        if size == 0 {
+            reply.data(&[]);
+            return;
+        }
+
+        let mut buffer = vec![0u8; size];
+
+        // Then loop one stripe-chunk at a time:
+        let au_size = handle.au_size as u64;
+        let stripe_count = handle.fine_stripe_count as u64;  // stripe count (e.g. 8)
+        let stripe_width = handle.fine_stripe_width as u64;  // stripe width (e.g. 512KB when AU=4MB)
+        let ve_size = stripe_count * au_size;                // file bytes per virtual extent (e.g. 8 x 4MB = 32MB)
+
+        let mut bytes_read :usize = 0;
+        while bytes_read < size {
+            let file_off = offset + bytes_read as u64;
+            let ve = file_off / ve_size;
+            let in_ve = file_off % ve_size;
+            let round = in_ve / au_size;
+            let in_round = in_ve % au_size;
+            let stripe = in_round / stripe_width;
+            let in_stripe = in_round % stripe_width;
+
+            let idx = (ve * stripe_count + stripe) as usize;
+            if idx >= handle.au_list.len() {
+                error!("Trying to reach index {} which does not exist in au_list (size={})", idx, handle.au_list.len());
+                reply.error(Errno::EIO);
+                return;
+            }
+
+            let (disk_no, au_no) = handle.au_list[idx];
+            let disk      = handle.disk_list.get(&disk_no).unwrap();
+            let disk_off  = au_no as u64 * au_size + round * stripe_width + in_stripe;
+            let chunk     = std::cmp::min(stripe_width - in_stripe, (size - bytes_read) as u64) as usize;
+
+            disk.read_exact_at(&mut buffer[bytes_read..bytes_read + chunk], disk_off)
+                .expect("read_exact_at() failed");
+            bytes_read += chunk;
+        }
+
+        reply.data(&buffer);
     }
 
     fn read_raw_coarse(&self, handle: Arc<RawOpenFileHandle>, offset: u64, bytes_requested: u32, reply: ReplyData) {

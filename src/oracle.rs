@@ -32,7 +32,9 @@ pub struct RawOpenFileHandle {
     pub(crate) file_type: String, // as seen in v$asm_file.type
     pub(crate) disk_list: HashMap<u16, File>, // disk_number => open file handle of (e.g. /dev/sdc)
     pub(crate) file_number: u32, // this is for debugging purposes
-    pub(crate) striped: u8       // v$asm_file.striped => const ASM_STRIPED_COARSE, ASM_STRIPED_FINE
+    pub(crate) striped: u8,       // v$asm_file.striped => const ASM_STRIPED_COARSE, ASM_STRIPED_FINE,
+    pub(crate) fine_stripe_count: u32, // only computed when striped = ASM_STRIPED_FINE
+    pub(crate) fine_stripe_width: u32  // only computed when striped = ASM_STRIPED_FINE
 }
 
 struct AsmAlias {
@@ -250,6 +252,24 @@ impl OracleConnection {
         self.conn.query(query, &[&group_number, &file_number, &mirror])
     }
 
+    fn select_fine_stripe_count(&self, group_number: u8, file_number: u32, mirror: u8) -> Result<ResultSet<'_,Row>, Error> {
+        let query = r#"
+            SELECT DISTINCT fine_stripe_count FROM (
+                SELECT xnum_kffxp, COUNT(*) as fine_stripe_count
+                    FROM x$kffxp
+                    WHERE group_kffxp = :1
+                        AND number_kffxp = :2
+                        AND lxn_kffxp = :3
+                        AND xnum_kffxp != 2147483648
+                    GROUP BY xnum_kffxp
+            )
+        "#;     // we expect single row returned, most likely with value 8
+                // if there are multiple rows returned, then this code probably doesn't understand
+                // the layout correctly.
+
+        self.conn.query(query, &[&group_number, &file_number, &mirror])
+    }
+
     fn select_au_size(&self, group_number: u8) -> Result<Row, Error> {
         let query = r#"
             select allocation_unit_size from v$asm_diskgroup where group_number = :1
@@ -264,6 +284,26 @@ impl OracleConnection {
         "#;
 
         self.conn.query(query, &[&group_number])
+    }
+
+    pub fn query_fine_stripe_count(&self, group_number: u8, file_number: u32, mirror: u8) -> Result<u32, Error> {
+        let rs = self.select_fine_stripe_count(group_number, file_number, mirror)?;
+        let mut stripe_count :u32 = 0;
+
+        for r in rs {
+            if stripe_count != 0 {
+                return Err(Error::new(ErrorKind::Other, "asmfs; select_fine_stripe_count should not return more than one value."));
+            }
+
+            let row = r?;
+            stripe_count = row.get("FINE_STRIPE_COUNT")?;
+        }
+
+        if stripe_count == 0 {
+            return Err(Error::new(ErrorKind::Other, "asmfs; select_fine_stripe_count should return exactly one value. stripe_count=0 means likely it didnt return any rows."))
+        }
+
+        Ok(stripe_count)
     }
 
     pub fn query_asm_disks(&self, group_number: u8) -> Result<HashMap<u16, String>, Error> {
@@ -490,12 +530,15 @@ impl OracleConnection {
         let file_type :String = row.get("TYPE")?;
         let striped :String = row.get("STRIPED")?;
         let group_number = inode._get_group_number();
+        let fine_stripe_count :u32;
+        let fine_stripe_width :u32;
 
         let striped :u8 = match striped.as_str() {
             "COARSE" => ASM_STRIPED_COARSE,
             "FINE" => ASM_STRIPED_FINE,
             _ => return Err(Error::new(ErrorKind::Other, format!("Invalid striped value '{}' for file_no={}, group={} ", striped, file_number, group_number))),
         };
+
 
         let au_list = self.query_extent_map(group_number, file_number, mirror)?;
         let au_size = self.query_au_size(group_number)?;
@@ -504,6 +547,14 @@ impl OracleConnection {
             return Err(Error::new(ErrorKind::Other, format!("No extent map found for file number {}, group {}", file_number, group_number)));
         }
 
+        if striped == ASM_STRIPED_FINE {
+            fine_stripe_count = self.query_fine_stripe_count(group_number, file_number, mirror)?;
+            fine_stripe_width = au_size / fine_stripe_count;
+            info!("Fine stripe count: {}, AU size: {}, Fine stripe width: {}", fine_stripe_count, au_size, fine_stripe_width); // ce be removed after we're done investigating fine striping.
+        } else {
+            fine_stripe_width = 0;
+            fine_stripe_count = 0;
+        }
 
         let disk_list :HashMap<u16, String> = self.query_asm_disks(group_number)?;
        
@@ -528,7 +579,9 @@ impl OracleConnection {
             file_type,
             disk_list: disk_list_open,
             file_number,
-            striped
+            striped,
+            fine_stripe_count,
+            fine_stripe_width
         };
 
         Ok(retval)
