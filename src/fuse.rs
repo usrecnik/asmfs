@@ -15,8 +15,8 @@ const MAGIC_FILE_TYPES: &[(&str, u32, u32, u32)] = &[  // file_type, magic_const
         ("ARCHIVELOG",  0x0000_81A0,     0,  19999), // not needed since, at last 23.26.1 onward (19c only)
         ("DATAFILE",    0x0000_81A0,     0,  19999), // <= 19c
         ("DATAFILE",    0x0000_0002, 20000, 999999), // >= 26ai
-        ("TEMPFILE",    0x0000_81A0,     0,  19999), // not needed since, at last 23.26.1 onward (19c only)
-        ("CONTROLFILE", 0x0000_0002,     0, 999999)
+        ("TEMPFILE",    0x0000_81A0,     0,  19999), // not needed since, at least 23.26.1 onward (19c only)
+        ("CONTROLFILE", 0x0000_81A0,     0,  19999), // not needed since, at least 23.26.1 onward (19c only)
 ];
 // TEMPFILEs needs no fix.
 // ARCHIVELOG in 26ai needs no fix.
@@ -386,7 +386,7 @@ impl AsmFS {
             let round_size = stripe_count * stripe_width;    // = SC*SW = 1 MB here, regardless of AU (128kb*8 = 1024kb = 1mb)
             let round = in_ve / round_size;
             let in_round = in_ve % round_size;
-            
+
             let stripe = in_round / stripe_width;
             let in_stripe = in_round % stripe_width;
 
@@ -405,6 +405,18 @@ impl AsmFS {
             disk.read_exact_at(&mut buffer[bytes_read..bytes_read + chunk], disk_off)
                 .expect("read_exact_at() failed");
             bytes_read += chunk;
+        }
+
+        if self.magic && offset == 0 {
+            if let Some((_, magic_constant, _, _)) = MAGIC_FILE_TYPES.iter().find(|(file_type, _, ver_min, ver_max)|
+                *file_type == handle.file_type.as_str() && (&self.oracle_version >= ver_min && &self.oracle_version <= ver_max)
+            ) {
+                if let Err(e) = fix_header_block(&mut buffer, *magic_constant) {
+                    error!(".. read_raw() failed to fix header block: {}", e);
+                    reply.error(Errno::ENOENT);
+                    return;
+                }
+            }
         }
 
         reply.data(&buffer);
