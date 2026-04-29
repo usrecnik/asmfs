@@ -254,19 +254,14 @@ impl OracleConnection {
 
     fn select_fine_stripe_count(&self, group_number: u8, file_number: u32, mirror: u8) -> Result<ResultSet<'_,Row>, Error> {
         let query = r#"
-            SELECT DISTINCT fine_stripe_count FROM (
-                SELECT xnum_kffxp, COUNT(*) as fine_stripe_count
-                    FROM x$kffxp
-                    WHERE group_kffxp = :1
-                        AND number_kffxp = :2
-                        AND lxn_kffxp = :3
-                        AND xnum_kffxp != 2147483648
-                    GROUP BY xnum_kffxp
-            )
-        "#;     // we expect single row returned, most likely with value 8
-                // if there are multiple rows returned, then this code probably doesn't understand
-                // the layout correctly.
-
+            SELECT MAX(pxn_kffxp) + 1 AS fine_stripe_count
+                FROM x$kffxp
+                WHERE group_kffxp  = :1
+                    AND number_kffxp = :2
+                    AND lxn_kffxp    = :3
+                    AND xnum_kffxp  != 2147483648
+        "#;
+        
         self.conn.query(query, &[&group_number, &file_number, &mirror])
     }
 
