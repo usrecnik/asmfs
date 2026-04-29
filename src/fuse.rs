@@ -348,6 +348,21 @@ impl AsmFS {
         }
     }
 
+    fn header_fix_constant_when_needed(&self, handle: &RawOpenFileHandle, offset: u64) -> Option<u32> {
+        if !self.magic || offset != 0 {
+            return None;
+        }
+
+        MAGIC_FILE_TYPES
+            .iter()
+            .find(|(file_type, _, ver_min, ver_max)| {
+                *file_type == handle.file_type.as_str()
+                    && &self.oracle_version >= ver_min
+                    && &self.oracle_version <= ver_max
+            })
+            .map(|(_, magic_constant, _, _)| *magic_constant)
+    }
+
     fn read_raw_fine(&self, handle: Arc<RawOpenFileHandle>, offset: u64, bytes_requested: u32, reply: ReplyData) {
         // clamp requested size to file size
         let size: usize = {
@@ -398,24 +413,20 @@ impl AsmFS {
             }
 
             let (disk_no, au_no) = handle.au_list[idx];
-            let disk      = handle.disk_list.get(&disk_no).unwrap();
-            let disk_off  = au_no as u64 * au_size + round * stripe_width + in_stripe;
-            let chunk     = std::cmp::min(stripe_width - in_stripe, (size - bytes_read) as u64) as usize;
+            let disk = handle.disk_list.get(&disk_no).unwrap();
+            let disk_off = au_no as u64 * au_size + round * stripe_width + in_stripe;
+            let chunk= std::cmp::min(stripe_width - in_stripe, (size - bytes_read) as u64) as usize;
 
             disk.read_exact_at(&mut buffer[bytes_read..bytes_read + chunk], disk_off)
                 .expect("read_exact_at() failed");
             bytes_read += chunk;
         }
 
-        if self.magic && offset == 0 {
-            if let Some((_, magic_constant, _, _)) = MAGIC_FILE_TYPES.iter().find(|(file_type, _, ver_min, ver_max)|
-                *file_type == handle.file_type.as_str() && (&self.oracle_version >= ver_min && &self.oracle_version <= ver_max)
-            ) {
-                if let Err(e) = fix_header_block(&mut buffer, *magic_constant) {
-                    error!(".. read_raw() failed to fix header block: {}", e);
-                    reply.error(Errno::ENOENT);
-                    return;
-                }
+        if let Some(magic_constant) = self.header_fix_constant_when_needed(&handle, offset) {
+            if let Err(e) = fix_header_block(&mut buffer, magic_constant) {
+                error!(".. read_raw_fine() failed to fix header block: {}", e);
+                reply.error(Errno::ENOENT);
+                return;
             }
         }
 
@@ -478,15 +489,11 @@ impl AsmFS {
             bytes_read += chunk_len;
         }
 
-        if self.magic && offset == 0 && au_first == 0 {
-            if let Some((_, magic_constant, _, _)) = MAGIC_FILE_TYPES.iter().find(|(file_type, _, ver_min, ver_max)|
-                *file_type == handle.file_type.as_str() && (&self.oracle_version >= ver_min && &self.oracle_version <= ver_max)
-            ) {
-                if let Err(e) = fix_header_block(&mut buffer, *magic_constant) {
-                    error!(".. read_raw() failed to fix header block: {}", e);
-                    reply.error(Errno::ENOENT);
-                    return;
-                }
+        if let Some(magic_constant) = self.header_fix_constant_when_needed(&handle, offset) {
+            if let Err(e) = fix_header_block(&mut buffer, magic_constant) {
+                error!(".. read_raw_coarse() failed to fix header block: {}", e);
+                reply.error(Errno::ENOENT);
+                return;
             }
         }
 
