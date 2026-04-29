@@ -47,7 +47,8 @@ pub struct AsmFS {
     use_raw: bool,  // read only after init
     mirror: u8,     // read only after init
     magic: bool,    // read only after init
-    oracle_version: u32 // only written in constructor
+    oracle_version: u32, // only written in constructor
+    fine_stripe_width: u32  // only written in constructor
 }
 
 impl AsmFS {
@@ -73,6 +74,14 @@ impl AsmFS {
             }
         };
 
+        let fine_stripe_width = match ora.query_fine_stripe_width() {
+            Ok(stripe_size) => stripe_size,
+            Err(e) => {
+                error!("Unable to query oracle fine stripe width {}", e);
+                std::process::exit(1);
+            }
+        };
+
         AsmFS {
             ora: Mutex::new(ora),
             connection_string,
@@ -82,7 +91,8 @@ impl AsmFS {
             use_raw,
             mirror,
             magic,
-            oracle_version}
+            oracle_version,
+            fine_stripe_width }
     }
 }
 
@@ -360,7 +370,7 @@ impl AsmFS {
         // Then loop one stripe-chunk at a time:
         let au_size = handle.au_size as u64;
         let stripe_count = handle.fine_stripe_count as u64;  // stripe count (e.g. 8)
-        let stripe_width = handle.fine_stripe_width as u64;  // stripe width (e.g. 512KB when AU=4MB)
+        let stripe_width = self.fine_stripe_width as u64;    // stripe width (e.g. 128K - this is probably a constant even though we're getting it from hidden param)
         let ve_size = stripe_count * au_size;                // file bytes per virtual extent (e.g. 8 x 4MB = 32MB)
 
         let mut bytes_read :usize = 0;
@@ -368,8 +378,15 @@ impl AsmFS {
             let file_off = offset + bytes_read as u64;
             let ve = file_off / ve_size;
             let in_ve = file_off % ve_size;
-            let round = in_ve / au_size;
-            let in_round = in_ve % au_size;
+            /*
+            `round` is meant to be "which row in the SC x rounds_per_AU grid"
+            so that `disk_off = au_no*AU + round*SW + in_stripe` walks the AU in SW-byte steps.
+            With AU=4 MB / SW=128 KB there are 32 rounds per AU. The correct denominator is the **round size** (one full cross-disk row of file data).
+             */
+            let round_size = stripe_count * stripe_width;    // = SC*SW = 1 MB here, regardless of AU (128kb*8 = 1024kb = 1mb)
+            let round = in_ve / round_size;
+            let in_round = in_ve % round_size;
+            
             let stripe = in_round / stripe_width;
             let in_stripe = in_round % stripe_width;
 

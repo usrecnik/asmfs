@@ -9,7 +9,7 @@ use std::fs::File;
 use crate::inode;
 use inode::Inode;
 use crate::afd::get_afd_map;
-use log::{debug, error, info}; // debug, info, error
+use log::{debug, error, warn, info}; // debug, info, error
 
 
 //use log::{info}; // debug, error
@@ -34,7 +34,6 @@ pub struct RawOpenFileHandle {
     pub(crate) file_number: u32, // this is for debugging purposes
     pub(crate) striped: u8,       // v$asm_file.striped => const ASM_STRIPED_COARSE, ASM_STRIPED_FINE,
     pub(crate) fine_stripe_count: u32, // only computed when striped = ASM_STRIPED_FINE
-    pub(crate) fine_stripe_width: u32  // only computed when striped = ASM_STRIPED_FINE
 }
 
 struct AsmAlias {
@@ -256,13 +255,24 @@ impl OracleConnection {
         let query = r#"
             SELECT MAX(pxn_kffxp) + 1 AS fine_stripe_count
                 FROM x$kffxp
-                WHERE group_kffxp  = :1
+                WHERE group_kffxp = :1
                     AND number_kffxp = :2
-                    AND lxn_kffxp    = :3
-                    AND xnum_kffxp  != 2147483648
+                    AND lxn_kffxp = :3
+                    AND xnum_kffxp != 2147483648
         "#;
         
         self.conn.query(query, &[&group_number, &file_number, &mirror])
+    }
+
+    fn select_fine_stripe_width(&self) -> Result<Row, Error> {
+        let query = r#"
+            SELECT b.ksppstvl as stripe_size
+                FROM x$ksppi a
+                JOIN x$ksppcv b ON a.indx = b.indx
+                WHERE a.ksppinm = '_asm_stripesize'
+        "#;
+
+        self.conn.query_row(query, &[])
     }
 
     fn select_au_size(&self, group_number: u8) -> Result<Row, Error> {
@@ -299,6 +309,16 @@ impl OracleConnection {
         }
 
         Ok(stripe_count)
+    }
+
+    pub fn query_fine_stripe_width(&self) -> Result<u32, Error> {
+        let rs = self.select_fine_stripe_width()?;
+        let stripe_width :String = rs.get("STRIPE_SIZE")?;
+        let stripe_width :u32 = stripe_width.parse::<u32>()?;
+        if stripe_width != 128*1024 {
+            warn!("_asm_stripesize is not 128KB. It is {}, which we'll use - but this is a bit of uncharted territory :)", stripe_width)
+        }
+        Ok(stripe_width)
     }
 
     pub fn query_asm_disks(&self, group_number: u8) -> Result<HashMap<u16, String>, Error> {
@@ -526,7 +546,6 @@ impl OracleConnection {
         let striped :String = row.get("STRIPED")?;
         let group_number = inode._get_group_number();
         let fine_stripe_count :u32;
-        let fine_stripe_width :u32;
 
         let striped :u8 = match striped.as_str() {
             "COARSE" => ASM_STRIPED_COARSE,
@@ -544,10 +563,18 @@ impl OracleConnection {
 
         if striped == ASM_STRIPED_FINE {
             fine_stripe_count = self.query_fine_stripe_count(group_number, file_number, mirror)?;
-            fine_stripe_width = au_size / fine_stripe_count;
-            info!("Fine stripe count: {}, AU size: {}, Fine stripe width: {}", fine_stripe_count, au_size, fine_stripe_width); // ce be removed after we're done investigating fine striping.
+
+            // Sanity check: au_list rows must come in groups of fine_stripe_count
+            // (one virtual extent = fine_stripe_count physical extents).
+            if au_list.len() % fine_stripe_count as usize != 0 {
+                return Err(Error::new(ErrorKind::Other, format!(
+                    "asmfs; au_list.len()={} is not divisible by fine_stripe_count={} for file_no={}, group={}",
+                    au_list.len(), fine_stripe_count, file_number, group_number
+                )));
+            }
+            
+            info!("Fine stripe count: {}, AU size: {}", fine_stripe_count, au_size); // msg to be removed after we're done investigating fine striping.
         } else {
-            fine_stripe_width = 0;
             fine_stripe_count = 0;
         }
 
@@ -575,8 +602,7 @@ impl OracleConnection {
             disk_list: disk_list_open,
             file_number,
             striped,
-            fine_stripe_count,
-            fine_stripe_width
+            fine_stripe_count
         };
 
         Ok(retval)
