@@ -387,6 +387,7 @@ impl AsmFS {
         let stripe_count = handle.fine_stripe_count as u64;  // stripe count (e.g. 8)
         let stripe_width = self.fine_stripe_width as u64;    // stripe width (e.g. 128K - this is probably a constant even though we're getting it from hidden param)
         let ve_size = stripe_count * au_size;                // file bytes per virtual extent (e.g. 8 x 4MB = 32MB)
+        let round_size = stripe_count * stripe_width;    // = SC*SW = 1 MB here, regardless of AU (128kb*8 = 1024kb = 1mb)
 
         let mut bytes_read :usize = 0;
         while bytes_read < size {
@@ -398,7 +399,6 @@ impl AsmFS {
             so that `disk_off = au_no*AU + round*SW + in_stripe` walks the AU in SW-byte steps.
             With AU=4 MB / SW=128 KB there are 32 rounds per AU. The correct denominator is the **round size** (one full cross-disk row of file data).
              */
-            let round_size = stripe_count * stripe_width;    // = SC*SW = 1 MB here, regardless of AU (128kb*8 = 1024kb = 1mb)
             let round = in_ve / round_size;
             let in_round = in_ve % round_size;
 
