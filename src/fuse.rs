@@ -392,7 +392,7 @@ impl AsmFS {
         let mut bytes_read :usize = 0;
         while bytes_read < size {
             let file_off = offset + bytes_read as u64;
-            let macro_ve = file_off / ve_size;
+            let ve = file_off / ve_size;
             let in_ve = file_off % ve_size;
             /*
             `round` is meant to be "which row in the SC x rounds_per_AU grid"
@@ -405,8 +405,7 @@ impl AsmFS {
             let stripe = in_round / stripe_width;
             let in_stripe = in_round % stripe_width;
 
-            // let idx = (ve * stripe_count + stripe) as usize; // most likely wrong
-            let idx = (round * stripe_count + stripe) as usize;
+            let idx = (ve * stripe_count + stripe) as usize; // most likely wrong
             if idx >= handle.au_list.len() {
                 error!("Trying to reach index {} which does not exist in au_list (size={})", idx, handle.au_list.len());
                 reply.error(Errno::EIO);
@@ -415,8 +414,7 @@ impl AsmFS {
 
             let (disk_no, au_no) = handle.au_list[idx];
             let disk = handle.disk_list.get(&disk_no).unwrap();
-            // let disk_off = au_no as u64 * au_size + round * stripe_width + in_stripe; // most likely wrong
-            let disk_off = au_no as u64 * au_size + macro_ve * stripe_width + in_stripe;
+            let disk_off = au_no as u64 * au_size + round * stripe_width + in_stripe;
             let chunk= std::cmp::min(stripe_width - in_stripe, (size - bytes_read) as u64) as usize;
 
             disk.read_exact_at(&mut buffer[bytes_read..bytes_read + chunk], disk_off)

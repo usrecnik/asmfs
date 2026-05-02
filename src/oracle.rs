@@ -251,7 +251,7 @@ impl OracleConnection {
         self.conn.query(query, &[&group_number, &file_number, &mirror])
     }
 
-    fn select_fine_stripe_count(&self, group_number: u8, file_number: u32, mirror: u8) -> Result<ResultSet<'_,Row>, Error> {
+    /*fn select_fine_stripe_count(&self, group_number: u8, file_number: u32, mirror: u8) -> Result<ResultSet<'_,Row>, Error> {
         let query = r#"
             SELECT MAX(pxn_kffxp) + 1 AS fine_stripe_count
                 FROM x$kffxp
@@ -262,7 +262,7 @@ impl OracleConnection {
         "#;
         
         self.conn.query(query, &[&group_number, &file_number, &mirror])
-    }
+    }*/
 
     fn select_fine_stripe_width(&self) -> Result<Row, Error> {
         let query = r#"
@@ -291,8 +291,8 @@ impl OracleConnection {
         self.conn.query(query, &[&group_number])
     }
 
-    pub fn query_fine_stripe_count(&self, group_number: u8, file_number: u32, mirror: u8) -> Result<u32, Error> {
-        let rs = self.select_fine_stripe_count(group_number, file_number, mirror)?;
+    pub fn query_fine_stripe_count(&self, _group_number: u8, _file_number: u32, _mirror: u8) -> Result<u32, Error> {
+       /* let rs = self.select_fine_stripe_count(group_number, file_number, mirror)?;
         let mut stripe_count :u32 = 0;
 
         for r in rs {
@@ -307,7 +307,8 @@ impl OracleConnection {
         if stripe_count == 0 {
             return Err(Error::new(ErrorKind::Other, "asmfs; select_fine_stripe_count should return exactly one value. stripe_count=0 means likely it didnt return any rows."))
         }
-
+        */
+        let stripe_count :u32 = 8; // constant!
         Ok(stripe_count)
     }
 
