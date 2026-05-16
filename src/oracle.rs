@@ -498,11 +498,7 @@ impl OracleConnection {
         let blksize: u32 = stmt.bind_value(4)?; // logical block size
         debug!(".. dbms_diskgroup.getfileattr(): target={}, filetype={}, filesize={}, blksize={}", target_path, filetype, filesize, blksize);
 
-        if filetype == FILE_TYPE_ARCHIVELOG_INT {
-            Ok((filetype, filesize, filesize+1, blksize))
-        } else {
-            Ok((filetype, filesize, filesize, blksize))
-        }
+        Ok((filetype, filesize, filesize, blksize))
     }
 
     pub fn _proc_copy(&self, src_fname: String, src_filetype: u32, src_blksize: u32, src_filesize: u64, dst_fname: String) -> Result<(), Error> {
@@ -668,7 +664,7 @@ impl OracleConnection {
             debug!(".. proc_read, length was > than bytes_size, thus lowered to {}", requested_bytes);
         }
 
-        let size_in_blocks_fs :u64 = size_in_bytes_fs / block_size as u64; // includes trailer block (e.g. for archivelog)
+        let size_in_blocks_fs :u64 = size_in_bytes_fs / block_size as u64;
         let size_in_blocks_asm :u64 = size_in_bytes_asm / block_size as u64 ; // exactly as dbms_diskgroup.read() can handle
         println!(".. size_in_blocks_fs={}, size_in_blocks_asm={}, (size_in_bytes_fs={} / block_size={})", size_in_blocks_fs, size_in_blocks_asm, size_in_bytes_fs, block_size);
 
@@ -699,16 +695,24 @@ impl OracleConnection {
             let offset_in_blocks = i + fix;
             let mut amount_in_blocks = read_step_blocks;
 
+            if already_read_blocks as u64 >= requested_blocks {
+                println!(".... request satisfied (already_read_blocks={} >= requested_blocks={}), stopping loop", already_read_blocks, requested_blocks);
+                break;
+            }
+
             if already_read_blocks + read_step_blocks > requested_blocks as u32 {
-                //amount_in_blocks = (already_read_blocks + read_step_blocks) - requested_blocks as u32 - 1; // -1 because blocks are zero-based (not fix)
-                // println!(".... amount_in_blocks reduced to {} ((already_read_blocks={} + read_step_blocks={}) - requested_blocks={})", amount_in_blocks, already_read_blocks, read_step_blocks, requested_blocks);
                 amount_in_blocks = requested_blocks as u32 - already_read_blocks;
                 println!(".... a) amount_in_blocks={} (requested_blocks={} - already_read_blocks={})", amount_in_blocks, requested_blocks, already_read_blocks);
             }
 
             if offset_in_blocks + (amount_in_blocks as u64) >= size_in_blocks_asm { // >= because if file_size=640 then we need to (can) read block 640.
-                amount_in_blocks = (size_in_blocks_fs - (offset_in_blocks - fix)) as u32;
+                amount_in_blocks = size_in_blocks_fs.saturating_sub(offset_in_blocks - fix) as u32;
                 println!(".... b) amount_in_blocks={} (size_in_blocks={} - (offset_in_blocks={} - fix={}))", amount_in_blocks, size_in_blocks_fs, offset_in_blocks, fix);
+            }
+
+            if amount_in_blocks == 0 {
+                println!(".... nothing more to read at offset_in_blocks={}, stopping loop", offset_in_blocks);
+                break;
             }
 
             let tmp_vec :Vec<u8> = self.proc_read_int(fh, block_size, offset_in_blocks, amount_in_blocks)?;
@@ -717,54 +721,16 @@ impl OracleConnection {
             buffer.extend(tmp_vec);
         }
 
-        // add trailer block (e.g. for archivelog)
-        if file_type == FILE_TYPE_ARCHIVELOG_INT {
-            if already_read_blocks < requested_blocks as u32 {
-                if offset_in_blocks + (already_read_blocks as u64) == size_in_blocks_fs {
-                    println!("... generating trailer block (offset_in_blocks={} + already_read_blocks={} = {} ==?== size_in_blocks_fs={})",  offset_in_blocks, already_read_blocks, offset_in_blocks+(already_read_blocks as u64), size_in_blocks_fs);
-                    let trail_vec :Vec<u8> = vec![0xFE; 512];
-                    buffer.extend(trail_vec);
-                    already_read_blocks += 1;
-                }
-            }
-        }
-
         // convert headers to local filesystem
-        if (offset_in_blocks == 0) && (file_type == FILE_TYPE_ARCHIVELOG_INT) {
-            self.fix_header_block_archivelog(&mut buffer)?;
-        }
+        // if (offset_in_blocks == 0) && (file_type == FILE_TYPE_ARCHIVELOG_INT) {
+           // @todo: call fix_header_block from fuse.rs
+        // }
 
         println!(".. done, read {} blocks (=already_read_blocks).", already_read_blocks);
         buffer.truncate(requested_bytes as usize);
 
         Ok(buffer)
     }
-
-    fn fix_header_block_archivelog(&self, buffer: &mut Vec<u8>) -> Result<(), Error> {
-        println!(".. fix_header_block_archivelog begin");
-
-        if buffer.len() < 512 {
-            return Err(Error::new(ErrorKind::Other, "asmfs; archivelog header buffer is less than 512 bytes"));
-        }
-
-        // Fix checksum at 0x10 -> 0x14
-        const MAGIC_XOR: u32 = 0x0000_81a0;
-
-        let checksum_bytes: [u8; 4] = buffer[0x10..0x14]
-            .try_into()
-            .map_err(|_| Error::new(ErrorKind::Other, "Failed to read checksum 0x10 -> 0x14"))?;
-
-        let checksum = u32::from_le_bytes(checksum_bytes) ^ MAGIC_XOR;
-        buffer[0x10..0x14].copy_from_slice(&checksum.to_le_bytes());
-
-        // Fix metadata at offset 0x20 -> 0x24
-        buffer[0x20..0x24].copy_from_slice(&MAGIC_XOR.to_le_bytes());
-
-        println!(".. fix_header_block_archivelog end");
-
-        Ok(())
-    }
-
 }
 
 fn oracle_timestamp_to_system_time(ts: &Timestamp) -> SystemTime {
