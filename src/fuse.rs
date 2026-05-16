@@ -326,7 +326,9 @@ impl AsmFS {
         let guard = self.handles_dbms.lock().unwrap();
         let handle = guard.get(&fh).unwrap();
 
-        match handle.conn.proc_read(fh, offset, size, handle.block_size, handle.bytes_size_fs(), handle.bytes_size_asm(), handle.file_type) {
+        let magic_constant = self.header_fix_constant_when_needed_int(handle.file_type, offset);
+
+        match handle.conn.proc_read(fh, offset, size, handle.block_size, handle.bytes_size_fs(), handle.bytes_size_asm(), handle.file_type, magic_constant) {
             Ok(buffer) => {
                 reply.data(buffer.as_slice());
                 debug!(".. read() ok, offset={}, size={}", offset, size);
@@ -338,6 +340,7 @@ impl AsmFS {
         }
     }
 
+    // used by raw path
     fn header_fix_constant_when_needed(&self, handle: &RawOpenFileHandle, offset: u64) -> Option<u32> {
         if !self.magic || offset != 0 {
             return None;
@@ -347,6 +350,22 @@ impl AsmFS {
             .iter()
             .find(|(file_type, _, ver_min, ver_max, _)| {
                 *file_type == handle.file_type.as_str()
+                    && &self.oracle_version >= ver_min
+                    && &self.oracle_version <= ver_max
+            })
+            .map(|(_, magic_constant, _, _, _)| *magic_constant)
+    }
+
+    // used by --no-raw (dbms_diskgroup) path
+    fn header_fix_constant_when_needed_int(&self, file_type_int: u32, offset: u64) -> Option<u32> {
+        if !self.magic || offset != 0 {
+            return None;
+        }
+
+        MAGIC_FILE_TYPES
+            .iter()
+            .find(|(_, _, ver_min, ver_max, ft_int)| {
+                *ft_int == file_type_int
                     && &self.oracle_version >= ver_min
                     && &self.oracle_version <= ver_max
             })

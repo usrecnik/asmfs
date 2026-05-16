@@ -654,7 +654,7 @@ impl OracleConnection {
         Ok(buffer)
     }
 
-    pub fn proc_read(&self, fh: u64, offset_in_bytes: u64, mut requested_bytes: u32, block_size: u32, size_in_bytes_fs: u64, size_in_bytes_asm: u64, file_type: u32) -> Result<Vec<u8>, Error> {
+    pub fn proc_read(&self, fh: u64, offset_in_bytes: u64, mut requested_bytes: u32, block_size: u32, size_in_bytes_fs: u64, size_in_bytes_asm: u64, file_type: u32, magic_constant: Option<u32>) -> Result<Vec<u8>, Error> {
 
         // some files seem to start at index zero, and some seem to start with the first block being 1 instead of 0.
         let fix: u64 = match file_type {
@@ -730,10 +730,9 @@ impl OracleConnection {
             buffer.extend(tmp_vec);
         }
 
-        // convert headers to local filesystem
-        // if (offset_in_blocks == 0) && (file_type == FILE_TYPE_ARCHIVELOG_INT) {
-           // @todo: call fix_header_block from fuse.rs
-        // }
+        if let Some(mc) = magic_constant {
+            fix_header_block(&mut buffer, mc)?;
+        }
 
         println!(".. done, read {} blocks (=already_read_blocks).", already_read_blocks);
         buffer.truncate(requested_bytes as usize);
