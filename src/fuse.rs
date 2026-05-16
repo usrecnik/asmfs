@@ -5,21 +5,11 @@ use std::time::{Duration, UNIX_EPOCH};
 use std::os::unix::fs::FileExt;
 use std::sync::{Arc, Mutex, RwLock};
 use log::{debug, info, error}; // debug
-use crate::oracle::{OracleConnection, RawOpenFileHandle, ASM_STRIPED_COARSE, ASM_STRIPED_FINE};
-use oracle::{Error, ErrorKind};
+use crate::oracle::{OracleConnection, RawOpenFileHandle, fix_header_block, ASM_STRIPED_COARSE, ASM_STRIPED_FINE, MAGIC_FILE_TYPES};
+use oracle::{Error};
 
 
 const TTL: Duration = Duration::from_secs(60); // 1 minute
-
-const MAGIC_FILE_TYPES: &[(&str, u32, u32, u32)] = &[  // file_type, magic_constant, version min, version max
-        ("ARCHIVELOG",  0x0000_81A0,     0,  19999), // not needed since, at last 23.26.1 onward (19c only)
-        ("DATAFILE",    0x0000_81A0,     0,  19999), // <= 19c
-        ("DATAFILE",    0x0000_0002, 20000, 999999), // >= 26ai
-        ("TEMPFILE",    0x0000_81A0,     0,  19999), // not needed since, at least 23.26.1 onward (19c only)
-        ("CONTROLFILE", 0x0000_81A0,     0,  19999), // not needed since, at least 23.26.1 onward (19c only)
-];
-// TEMPFILEs needs no fix.
-// ARCHIVELOG in 26ai needs no fix.
 
 struct OpenFileHandle {
     conn: OracleConnection,
@@ -499,29 +489,4 @@ impl AsmFS {
 
         reply.data(&buffer);
     }
-}
-
-// this works on datafiles:
-fn fix_header_block(buffer: &mut Vec<u8>, target_metadata: u32) -> Result<(), Error> {
-
-    info!("Fixing header block with target_metadata: 0x{:08X}", target_metadata);
-
-    if buffer.len() < 512 {
-        return Err(Error::new(ErrorKind::Other, "asmfs; archivelog header buffer is less than 512 bytes"));
-    }
-
-    let metadata_bytes: [u8; 4] = buffer[0x20..0x24]
-        .try_into()
-        .map_err(|_| Error::new(ErrorKind::Other, "Failed to read metadata 0x20 -> 0x24"))?;
-    let metadata = u32::from_le_bytes(metadata_bytes);
-    let delta = metadata ^ target_metadata;
-
-    let checksum_bytes: [u8; 4] = buffer[0x10..0x14]
-        .try_into()
-        .map_err(|_| Error::new(ErrorKind::Other, "Failed to read checksum 0x10 -> 0x14"))?;
-    let checksum = u32::from_le_bytes(checksum_bytes) ^ delta;
-    buffer[0x10..0x14].copy_from_slice(&checksum.to_le_bytes());
-
-    buffer[0x20..0x24].copy_from_slice(&target_metadata.to_le_bytes());
-    Ok(())
 }

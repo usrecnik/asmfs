@@ -25,6 +25,16 @@ const FILE_TYPE_ARCHIVELOG_INT: u32 = 4;
 pub const ASM_STRIPED_COARSE :u8 = 0;
 pub const ASM_STRIPED_FINE :u8 = 1;
 
+pub const MAGIC_FILE_TYPES: &[(&str, u32, u32, u32)] = &[  // file_type, magic_constant, version min, version max
+    ("ARCHIVELOG",  0x0000_81A0,     0,  19999), // not needed since, at last 23.26.1 onward (19c only)
+    ("DATAFILE",    0x0000_81A0,     0,  19999), // <= 19c
+    ("DATAFILE",    0x0000_0002, 20000, 999999), // >= 26ai
+    ("TEMPFILE",    0x0000_81A0,     0,  19999), // not needed since, at least 23.26.1 onward (19c only)
+    ("CONTROLFILE", 0x0000_81A0,     0,  19999), // not needed since, at least 23.26.1 onward (19c only)
+];
+// TEMPFILEs needs no fix.
+// ARCHIVELOG in 26ai needs no fix.
+
 pub struct RawOpenFileHandle {
     pub(crate) au_list: Vec<(u16, u32)>, // disk_number, allocation_unit
     pub(crate) au_size: u32,
@@ -737,4 +747,28 @@ fn oracle_timestamp_to_system_time(ts: &Timestamp) -> SystemTime {
     let nd = NaiveDate::from_ymd_opt(ts.year(), ts.month(), ts.day()).unwrap().and_hms_opt(ts.hour(), ts.minute(), ts.second()).unwrap();
     let datetime_utc: DateTime<Utc> = DateTime::<Utc>::from_naive_utc_and_offset(nd, Utc);
     SystemTime::from(datetime_utc)
+}
+
+pub fn fix_header_block(buffer: &mut Vec<u8>, target_metadata: u32) -> Result<(), Error> {
+
+    info!("Fixing header block with target_metadata: 0x{:08X}", target_metadata);
+
+    if buffer.len() < 512 {
+        return Err(Error::new(ErrorKind::Other, "asmfs; archivelog header buffer is less than 512 bytes"));
+    }
+
+    let metadata_bytes: [u8; 4] = buffer[0x20..0x24]
+        .try_into()
+        .map_err(|_| Error::new(ErrorKind::Other, "Failed to read metadata 0x20 -> 0x24"))?;
+    let metadata = u32::from_le_bytes(metadata_bytes);
+    let delta = metadata ^ target_metadata;
+
+    let checksum_bytes: [u8; 4] = buffer[0x10..0x14]
+        .try_into()
+        .map_err(|_| Error::new(ErrorKind::Other, "Failed to read checksum 0x10 -> 0x14"))?;
+    let checksum = u32::from_le_bytes(checksum_bytes) ^ delta;
+    buffer[0x10..0x14].copy_from_slice(&checksum.to_le_bytes());
+
+    buffer[0x20..0x24].copy_from_slice(&target_metadata.to_le_bytes());
+    Ok(())
 }
