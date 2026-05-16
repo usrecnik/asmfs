@@ -44,7 +44,7 @@ impl Inode {
         self.0 as u32
     }
 
-    pub fn _get_group_number(&self) -> u8 {
+    pub fn get_group_number(&self) -> u8 {
         (self.0 >> 56) as u8
     }
 
@@ -62,7 +62,7 @@ impl Inode {
 
 
     pub fn _debug_dump(&self) {
-        println!("Inode {} -> group_number: {}, reference_index={}/{:X}, alias_index={:X}, entry_number={:X}, is_diskgroup={}", self.0, self._get_group_number(),
+        println!("Inode {} -> group_number: {}, reference_index={}/{:X}, alias_index={:X}, entry_number={:X}, is_diskgroup={}", self.0, self.get_group_number(),
                  self.get_reference_index(), self.get_reference_index(),
                  self.get_alias_index(), self._get_entry_number(), self._is_disk_group());
     }

@@ -486,14 +486,15 @@ impl OracleConnection {
                         select a.*, g.name as group_name
                             from v$asm_alias a
                             join v$asm_diskgroup g on a.group_number = g.group_number
+                            where a.group_number = :1
                     )
                     start with (mod(parent_index, power(2, 24))) = 0
                     connect by prior reference_index = parent_index
-            ) x where x.file_number = :1 and x.system_created = 'Y'
+            ) x where x.file_number = :2 and x.system_created = 'Y'
             fetch first 1 rows only
         "#;
 
-        let target_row = self.conn.query_row(query, &[&link_struct.file_number])?;
+        let target_row = self.conn.query_row(query, &[&link_inode.get_group_number(), &link_struct.file_number])?;
         let target_name :String = target_row.get("NAME")?;
         Ok(target_name)
     }
@@ -550,7 +551,7 @@ impl OracleConnection {
         let file_size_bytes = row.get("BYTES")?;
         let file_type :String = row.get("TYPE")?;
         let striped :String = row.get("STRIPED")?;
-        let group_number = inode._get_group_number();
+        let group_number = inode.get_group_number();
         let fine_stripe_count :u32;
 
         let striped :u8 = match striped.as_str() {
