@@ -20,17 +20,16 @@ pub struct OracleConnection {
 
 const ASM_ALIAS_COLUMNS: &str = "a.reference_index, a.alias_index, a.file_number, a.name, a.alias_directory, a.system_created";
 const ASM_FILE_COLUMNS: &str = "f.bytes, f.blocks, f.creation_date, f.modification_date, f.type, f.striped";
-const FILE_TYPE_ARCHIVELOG_INT: u32 = 4;
 
 pub const ASM_STRIPED_COARSE :u8 = 0;
 pub const ASM_STRIPED_FINE :u8 = 1;
 
-pub const MAGIC_FILE_TYPES: &[(&str, u32, u32, u32)] = &[  // file_type, magic_constant, version min, version max
-    ("ARCHIVELOG",  0x0000_81A0,     0,  19999), // not needed since, at last 23.26.1 onward (19c only)
-    ("DATAFILE",    0x0000_81A0,     0,  19999), // <= 19c
-    ("DATAFILE",    0x0000_0002, 20000, 999999), // >= 26ai
-    ("TEMPFILE",    0x0000_81A0,     0,  19999), // not needed since, at least 23.26.1 onward (19c only)
-    ("CONTROLFILE", 0x0000_81A0,     0,  19999), // not needed since, at least 23.26.1 onward (19c only)
+pub const MAGIC_FILE_TYPES: &[(&str, u32, u32, u32, u32)] = &[  // file_type, magic_constant, version min, version max, file_type_id_as_returned_using_dbms_diskgroup
+    ("ARCHIVELOG",  0x0000_81A0,     0,  19999, 4), // not needed since, at last 23.26.1 onward (19c only)
+    ("DATAFILE",    0x0000_81A0,     0,  19999, 2), // <= 19c
+    ("DATAFILE",    0x0000_0002, 20000, 999999, 2), // >= 26ai
+    ("TEMPFILE",    0x0000_81A0,     0,  19999, 5), // not needed since, at least 23.26.1 onward (19c only)
+    ("CONTROLFILE", 0x0000_81A0,     0,  19999, 1), // not needed since, at least 23.26.1 onward (19c only)
 ];
 // TEMPFILEs needs no fix.
 // ARCHIVELOG in 26ai needs no fix.

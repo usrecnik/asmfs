@@ -345,12 +345,12 @@ impl AsmFS {
 
         MAGIC_FILE_TYPES
             .iter()
-            .find(|(file_type, _, ver_min, ver_max)| {
+            .find(|(file_type, _, ver_min, ver_max, _)| {
                 *file_type == handle.file_type.as_str()
                     && &self.oracle_version >= ver_min
                     && &self.oracle_version <= ver_max
             })
-            .map(|(_, magic_constant, _, _)| *magic_constant)
+            .map(|(_, magic_constant, _, _, _)| *magic_constant)
     }
 
     fn read_raw_fine(&self, handle: Arc<RawOpenFileHandle>, offset: u64, bytes_requested: u32, reply: ReplyData) {
