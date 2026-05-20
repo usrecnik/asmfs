@@ -12,7 +12,7 @@ CFG_RELEASE="${1:-debug}"
 
 CFG_SRC_PATH="$(pwd)"
 CFG_SRC_PATH="${CFG_SRC_PATH%/*}"
-CFG_VERSION="$(cat ../Cargo.toml  | grep version | cut -d'=' -f2 | sed 's/"//g' | xargs)"
+CFG_VERSION="$(cat ../Cargo.toml  | grep version | head -n 1 | cut -d'=' -f2 | sed 's/"//g' | xargs)"
 
 for l_dist in "${CFG_DIST_LIST[@]}"
 do
