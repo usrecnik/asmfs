@@ -86,7 +86,7 @@ fn main() {
 
     let connection_string = matches.get_one::<String>("conn");
     let mountpoint_arg = matches.get_many::<String>("PATH_ARGS").unwrap();
-    let mountpoint_arg = mountpoint_arg.last().unwrap(); // intentionally, because first argument is "dummy", used only when fstab is used.
+    let mountpoint_arg = mountpoint_arg.last().unwrap(); // intentionally, because first argument is "dummy" when fstab is used.
     let use_raw = !matches.get_flag("no-raw");
     let magic = !matches.get_flag("no-magic");
     let mirror = matches.get_one::<String>("mirror").map(|s| s.as_str()).unwrap_or("0");
@@ -95,7 +95,6 @@ fn main() {
     let threads: usize = threads.parse().unwrap_or(8);
     let daemon = matches.get_flag("daemon");
     let log_file = matches.get_one::<String>("log-file");
-
 
     let mountpoint = match std::fs::canonicalize(mountpoint_arg) {
         Ok(path) => path,
