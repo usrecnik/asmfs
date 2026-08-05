@@ -10,8 +10,10 @@ n/a
 
 %install
 install -Dm755 /opt/asmfs-src/target/%{asmfs_build_type}/asmfs %{buildroot}/opt/asmfs/asmfs
+install -d %{buildroot}%{_bindir}
+ln -s /opt/asmfs/asmfs %{buildroot}%{_bindir}/asmfs
 
 %files
 %dir /opt/asmfs/
 /opt/asmfs/asmfs
-
+%{_bindir}/asmfs
