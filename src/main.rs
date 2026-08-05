@@ -89,6 +89,48 @@ fn main() {
                 .action(ArgAction::SetTrue)
                 .help("Automatically unmount on process exit"),
         )
+        // mount(8) may pass following standard external-helper flags. Most are handled
+        // upstream by mount or mount.fuse3; accepting them prevents clap from
+        // rejecting valid helper invocations. In this interface, -f means fake
+        // (dry run), not the FUSE convention of foreground mode.
+        .arg(
+            Arg::new("helper-sloppy")
+                .short('s')
+                .action(ArgAction::SetTrue)
+                .hide(true),
+        )
+        .arg(
+            Arg::new("helper-no-mtab")
+                .short('n')
+                .action(ArgAction::SetTrue)
+                .hide(true),
+        )
+        .arg(
+            Arg::new("helper-verbose")
+                .short('v')
+                .action(ArgAction::SetTrue)
+                .hide(true),
+        )
+        .arg(
+            Arg::new("helper-namespace")
+                .short('N')
+                .value_name("NAMESPACE")
+                .action(ArgAction::Set)
+                .hide(true),
+        )
+        .arg(
+            Arg::new("helper-type")
+                .short('t')
+                .value_name("TYPE")
+                .action(ArgAction::Set)
+                .hide(true),
+        )
+        .arg(
+            Arg::new("fake")
+                .short('f')
+                .action(ArgAction::SetTrue)
+                .help("Validate arguments without mounting"),
+        )
         .get_matches();
 
     /*
@@ -186,6 +228,10 @@ fn main() {
             std::process::exit(2);
         }
     };
+
+    if matches.get_flag("fake") {
+        return;
+    }
 
     options.push(MountOption::CUSTOM("max_read=33554432".into())); // 32MB max read
     options.push(MountOption::RO); // force read-only
