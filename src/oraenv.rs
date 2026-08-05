@@ -3,7 +3,6 @@ use std::ffi::{CString, OsStr, OsString};
 use std::fs;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::PathBuf;
-use log::{info, warn};
 
 const BOOTSTRAP_GUARD: &str = "ASMFS_ENV_BOOTSTRAP";
 const PMON_PREFIX: &[u8] = b"asm_pmon_+ASM";
@@ -25,18 +24,18 @@ pub(crate) fn bootstrap_oracle_env(args: &[OsString]) {
         && existing_library_path.is_some()
     {
         // Everything was supplied manually. Do not inspect or validate it, just use it.
-        info!("Oracle environment already set (ORACLE_SID, ORACLE_HOME, LD_LIBRARY_PATH). Skipping bootstrap.");
+        println!("Oracle environment already set (ORACLE_SID, ORACLE_HOME, LD_LIBRARY_PATH). Skipping bootstrap.");
         return;
     }
 
     let discovered_instance = find_asm_instance();
     let Some((pid, sid)) = discovered_instance.as_ref() else {
-        warn!("No ASM instance found. Skipping bootstrap.");
+        eprintln!("No ASM instance found. Skipping bootstrap.");
         return;
     };
 
     let Some(home) = oracle_home_from_executable(*pid) else {
-        warn!("No Oracle home found for ASM instance. Skipping bootstrap.");
+        eprintln!("No Oracle home found for ASM instance. Skipping bootstrap.");
         return;
     };
 
@@ -52,18 +51,19 @@ pub(crate) fn bootstrap_oracle_env(args: &[OsString]) {
     };
 
     // SAFETY: this function is called before logging, clap, FUSE, or any
-    // other code that could create another thread.
+    // other code that could create another thread. This is why this oraenv.rs intentionally
+    // avoids using info!() or warn!() calls.
     unsafe {
         env::set_var("ORACLE_HOME", &home);
         env::set_var("ORACLE_SID", sid);
         env::set_var("LD_LIBRARY_PATH", new_library_path.clone());
         env::set_var(BOOTSTRAP_GUARD, "1");
     }
-    
-    info!("Re-executing with:");
-    info!("  ORACLE_SID={}", sid.to_string_lossy());
-    info!("  ORACLE_HOME={}", home.display());
-    info!("  LD_LIBRARY_PATH={}", new_library_path.display());
+
+    println!("Re-executing with:");
+    println!("  ORACLE_SID={}", sid.to_string_lossy());
+    println!("  ORACLE_HOME={}", home.display());
+    println!("  LD_LIBRARY_PATH={}", new_library_path.display());
 
     reexec(args);
 }
