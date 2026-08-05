@@ -228,7 +228,10 @@ fn main() {
         }
     };
 
-    let mut options = vec![MountOption::FSName("asmfs".to_string())];
+    let mut options = vec![
+        MountOption::FSName("asmfs".to_string()),
+        MountOption::Subtype("asmfs".to_string()),
+    ];
     if matches.get_flag("auto-unmount") || mount_option_present(&mount_options, "auto-unmount") || mount_option_present(&mount_options, "auto_unmount") {
         options.push(MountOption::AutoUnmount);
     }
