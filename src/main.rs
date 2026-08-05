@@ -4,9 +4,10 @@ mod fuse;
 mod inode;
 mod afd;
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
-use std::os::fd::FromRawFd;
+use std::os::fd::{AsRawFd, FromRawFd};
+use std::path::Path;
 use clap::{Arg, ArgAction, Command};
 use fuser::MountOption;
 use fuser::SessionACL;
@@ -68,6 +69,13 @@ fn main() {
                 .help("Mount in the background"),
         )
         .arg(
+            Arg::new("log-file")
+                .long("log-file")
+                .value_name("PATH")
+                .requires("daemon")
+                .help("Write daemon stdout and stderr to this file"),
+        )
+        .arg(
             Arg::new("auto-unmount")
                 .long("auto-unmount")
                 .action(ArgAction::SetTrue)
@@ -84,6 +92,7 @@ fn main() {
     let threads = matches.get_one::<String>("threads").unwrap();
     let threads: usize = threads.parse().unwrap_or(8);
     let daemon = matches.get_flag("daemon");
+    let log_file = matches.get_one::<String>("log-file");
 
     let mountpoint = match std::fs::canonicalize(mountpoint_arg) {
         Ok(path) => path,
@@ -134,7 +143,9 @@ fn main() {
     };
 
     if status_pipe.is_some() {
-        if let Err(e) = redirect_stdio_to_devnull() {
+        let log_path = log_file.map(Path::new);
+
+        if let Err(e) = redirect_daemon_stdio(log_path) {
             startup_failed(&mut status_pipe, &format!("Failed to redirect daemon standard streams: {e}"));
         }
 
@@ -249,34 +260,34 @@ fn startup_failed(status_pipe: &mut Option<File>, message: &str) -> ! {
     std::process::exit(1);
 }
 
-// later we should probably redirect to file-based logging instead:
-fn redirect_stdio_to_devnull() -> std::io::Result<()> {
-    let devnull = unsafe {
-        libc::open(
-            c"/dev/null".as_ptr(),
-            libc::O_RDWR | libc::O_CLOEXEC,
-        )
-    };
+fn redirect_daemon_stdio(log_file: Option<&Path>) -> std::io::Result<()> {
+    let devnull = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/null")?;
 
-    if devnull == -1 {
+    if unsafe { libc::dup2(devnull.as_raw_fd(), 0) } == -1 {
         return Err(std::io::Error::last_os_error());
     }
 
-    for target_fd in [0, 1, 2] {
-        if unsafe { libc::dup2(devnull, target_fd) } == -1 {
-            let error = std::io::Error::last_os_error();
+    let log = match log_file {
+        Some(path) => Some(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)?,
+        ),
+        None => None,
+    };
 
-            unsafe {
-                libc::close(devnull);
-            }
+    let output_fd = match &log {
+        Some(file) => file.as_raw_fd(),
+        None => devnull.as_raw_fd(),
+    };
 
-            return Err(error);
-        }
-    }
-
-    if devnull > 2 {
-        unsafe {
-            libc::close(devnull);
+    for target_fd in [1, 2] {
+        if unsafe { libc::dup2(output_fd, target_fd) } == -1 {
+            return Err(std::io::Error::last_os_error());
         }
     }
 
