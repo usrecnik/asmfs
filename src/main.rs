@@ -133,21 +133,19 @@ fn main() {
         Err(e) => startup_failed(&mut status_pipe, &format!("Failed to start FUSE workers: {e}"))
     };
 
-    if let Some(mut pipe) = status_pipe.take() {
-        // is block only runs in the daemon child because foreground mode has status_pipe == None
-
-        if let Err(e) = pipe.write_all(b"OK\n").and_then(|_| pipe.flush()) {
-            eprintln!("Failed to report daemon startup: {e}");
-            std::process::exit(1);
-        }
-
-        // Close the pipe so the parent receives EOF and exits.
-        drop(pipe);
-
+    if status_pipe.is_some() {
         if let Err(e) = redirect_stdio_to_devnull() {
-            eprintln!("Failed to redirect daemon standard streams: {e}");
+            startup_failed(&mut status_pipe, &format!("Failed to redirect daemon standard streams: {e}"));
+        }
+
+        let mut pipe = status_pipe.take().unwrap();
+
+        if pipe.write_all(b"OK\n").and_then(|_| pipe.flush()).is_err() {
+            // The parent may have disappeared, so there is nowhere useful left to report this error.
             std::process::exit(1);
         }
+
+        drop(pipe);
     }
 
     if let Err(e) = background.join() {
