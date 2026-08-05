@@ -4,6 +4,9 @@ mod fuse;
 mod inode;
 mod afd;
 
+use std::fs::File;
+use std::io::{Read, Write};
+use std::os::fd::FromRawFd;
 use clap::{Arg, ArgAction, Command};
 use fuser::MountOption;
 use fuser::SessionACL;
@@ -80,7 +83,7 @@ fn main() {
     let mirror: u8 = mirror.parse().unwrap_or(0);
     let threads = matches.get_one::<String>("threads").unwrap();
     let threads: usize = threads.parse().unwrap_or(8);
-    let _daemon = matches.get_flag("daemon");
+    let daemon = matches.get_flag("daemon");
 
     let mountpoint = match std::fs::canonicalize(mountpoint_arg) {
         Ok(path) => path,
@@ -113,22 +116,130 @@ fn main() {
     cfg.clone_fd = true;
     cfg.mount_options = options;
 
+    let mut status_pipe = start_daemon(daemon);
+
     let asmfs = match AsmFS::new(mountpoint_string, connection_string.cloned(), use_raw, magic, mirror) {
         Ok(asmfs) => asmfs,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(1);
-        }
+        Err(e) => startup_failed(&mut status_pipe, &e)
     };
 
-    match fuser::mount2(asmfs, mountpoint, &cfg) {
-        Ok(_) => {},
-        Err(e) => {
-            eprintln!("Failed to mount FUSE filesystem: {:?}", e);
-            eprintln!("Error kind: {:?}", e.kind());
-            eprintln!("OS error code: {:?}", e.raw_os_error());
+    let session = match fuser::Session::new(asmfs, &mountpoint, &cfg) {
+        Ok(session) => session,
+        Err(e) => startup_failed(&mut status_pipe, &format!("Failed to mount FUSE filesystem: {e}"))
+    };
+
+    let background = match session.spawn() {
+        Ok(background) => background,
+        Err(e) => startup_failed(&mut status_pipe, &format!("Failed to start FUSE workers: {e}"))
+    };
+
+    if let Some(mut pipe) = status_pipe.take() {
+        if let Err(e) = pipe.write_all(b"OK\n").and_then(|_| pipe.flush()) {
+            eprintln!("Failed to report daemon startup: {e}");
             std::process::exit(1);
         }
+
+        // Close the pipe so the parent receives EOF and exits.
+        drop(pipe);
     }
 
+    if let Err(e) = background.join() {
+        eprintln!("FUSE session failed: {e}");
+        std::process::exit(1);
+    }
+
+}
+/*
+--daemon needs two processes:
+  - The parent waits only long enough to learn whether mounting succeeded, then exits.
+  - The child performs the mount and stays alive to serve the filesystem.
+  
+*/
+fn start_daemon(enabled: bool) -> Option<File> {
+    if !enabled {
+        return None;
+    }
+
+    let mut fds = [0 as libc::c_int; 2];
+
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        eprintln!(
+            "Failed to create daemon status pipe: {}",
+            std::io::Error::last_os_error()
+        );
+        std::process::exit(1);
+    }
+
+    match unsafe { libc::fork() } {
+        -1 => {
+            let error = std::io::Error::last_os_error();
+
+            unsafe {
+                libc::close(fds[0]);
+                libc::close(fds[1]);
+            }
+
+            eprintln!("Failed to fork daemon: {error}");
+            std::process::exit(1);
+        }
+
+        0 => {
+            // Child keeps only the write end.
+            unsafe {
+                libc::close(fds[0]);
+            }
+
+            if unsafe { libc::setsid() } == -1 {
+                let error = std::io::Error::last_os_error();
+
+                // SAFETY: the child exclusively owns this descriptor.
+                let mut pipe = unsafe { File::from_raw_fd(fds[1]) };
+                let _ = writeln!(pipe, "Failed to create daemon session: {error}");
+                std::process::exit(1);
+            }
+
+            // SAFETY: the child exclusively owns this descriptor.
+            Some(unsafe { File::from_raw_fd(fds[1]) })
+        }
+
+        _ => {
+            // Parent keeps only the read end.
+            unsafe {
+                libc::close(fds[1]);
+            }
+
+            // SAFETY: the parent exclusively owns this descriptor.
+            let mut pipe = unsafe { File::from_raw_fd(fds[0]) };
+            let mut status = String::new();
+
+            match pipe.read_to_string(&mut status) {
+                Ok(_) if status.starts_with("OK\n") => {
+                    std::process::exit(0);
+                }
+                Ok(_) if status.is_empty() => {
+                    eprintln!("asmfs: daemon child exited before reporting");
+                    std::process::exit(1);
+                }
+                Ok(_) => {
+                    eprint!("{status}");
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    eprintln!("asmfs: failed to read daemon status: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+}
+
+fn startup_failed(status_pipe: &mut Option<File>, message: &str) -> ! {
+    if let Some(pipe) = status_pipe.as_mut() {
+        let _ = writeln!(pipe, "{message}");
+        let _ = pipe.flush();
+    } else {
+        eprintln!("{message}");
+    }
+
+    std::process::exit(1);
 }
