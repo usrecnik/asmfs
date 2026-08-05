@@ -186,7 +186,7 @@ fn main() {
 
     let mut status_pipe = start_daemon(daemon);
 
-    let asmfs = match AsmFS::new(mountpoint_string, connection_string.cloned(), use_raw, magic, mirror) {
+    let asmfs = match AsmFS::new(mountpoint_string, connection_string, use_raw, magic, mirror) {
         Ok(asmfs) => asmfs,
         Err(e) => startup_failed(&mut status_pipe, &e)
     };
