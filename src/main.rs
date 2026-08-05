@@ -30,7 +30,7 @@ fn main() {
                 .required(true)
                 .index(1)
                 .num_args(1..=2)
-                .help("Act as a client, and mount FUSE at given path"),
+                .help("Mount FUSE using <MOUNTPOINT> or <SPEC> <MOUNTPOINT>"), // SPEC is ignored, such syntax is supported only because of fstab compatibility.
         )
         .arg(
             Arg::new("conn")
