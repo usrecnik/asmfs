@@ -195,14 +195,6 @@ fn main() {
         std::process::exit(2);
     }
 
-    let mountpoint = match std::fs::canonicalize(mountpoint_arg) {
-        Ok(path) => path,
-        Err(e) => {
-            eprintln!("Failed to resolve mountpoint '{}': {e}", mountpoint_arg);
-            std::process::exit(1);
-        }
-    };
-
     let allow_root = mount_option_present(&mount_options, "allow_root");
     let allow_other = mount_option_present(&mount_options, "allow_other");
 
@@ -219,6 +211,14 @@ fn main() {
     if matches.get_flag("fake") {
         return;
     }
+
+    let mountpoint = match std::fs::canonicalize(mountpoint_arg) {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("Failed to resolve mountpoint '{}': {e}", mountpoint_arg);
+            std::process::exit(1);
+        }
+    };
 
     let mountpoint_string = match mountpoint.to_str() {
         Some(path) => path.to_owned(),
