@@ -134,6 +134,8 @@ fn main() {
     };
 
     if let Some(mut pipe) = status_pipe.take() {
+        // is block only runs in the daemon child because foreground mode has status_pipe == None
+
         if let Err(e) = pipe.write_all(b"OK\n").and_then(|_| pipe.flush()) {
             eprintln!("Failed to report daemon startup: {e}");
             std::process::exit(1);
@@ -141,6 +143,11 @@ fn main() {
 
         // Close the pipe so the parent receives EOF and exits.
         drop(pipe);
+
+        if let Err(e) = redirect_stdio_to_devnull() {
+            eprintln!("Failed to redirect daemon standard streams: {e}");
+            std::process::exit(1);
+        }
     }
 
     if let Err(e) = background.join() {
@@ -153,7 +160,7 @@ fn main() {
 --daemon needs two processes:
   - The parent waits only long enough to learn whether mounting succeeded, then exits.
   - The child performs the mount and stays alive to serve the filesystem.
-  
+
 */
 fn start_daemon(enabled: bool) -> Option<File> {
     if !enabled {
@@ -242,4 +249,38 @@ fn startup_failed(status_pipe: &mut Option<File>, message: &str) -> ! {
     }
 
     std::process::exit(1);
+}
+
+// later we should probably redirect to file-based logging instead:
+fn redirect_stdio_to_devnull() -> std::io::Result<()> {
+    let devnull = unsafe {
+        libc::open(
+            c"/dev/null".as_ptr(),
+            libc::O_RDWR | libc::O_CLOEXEC,
+        )
+    };
+
+    if devnull == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    for target_fd in [0, 1, 2] {
+        if unsafe { libc::dup2(devnull, target_fd) } == -1 {
+            let error = std::io::Error::last_os_error();
+
+            unsafe {
+                libc::close(devnull);
+            }
+
+            return Err(error);
+        }
+    }
+
+    if devnull > 2 {
+        unsafe {
+            libc::close(devnull);
+        }
+    }
+
+    Ok(())
 }
