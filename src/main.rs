@@ -174,12 +174,25 @@ fn main() {
         options.push(MountOption::AutoUnmount);
     }
 
+    let allow_root = mount_option_present(&mount_options, "allow_root");
+    let allow_other = mount_option_present(&mount_options, "allow_other");
+
+    let acl = match (allow_root, allow_other) {
+        (false, false) => SessionACL::Owner,
+        (true, false) => SessionACL::RootAndOwner,
+        (false, true) => SessionACL::All,
+        (true, true) => {
+            eprintln!("mount options 'allow_root' and 'allow_other' are mutually exclusive");
+            std::process::exit(2);
+        }
+    };
+
     options.push(MountOption::CUSTOM("max_read=33554432".into())); // 32MB max read
     options.push(MountOption::RO); // force read-only
     options.push(MountOption::Async);
 
     let mut cfg = Config::default();
-    cfg.acl = SessionACL::Owner;
+    cfg.acl = acl;
     cfg.n_threads = Some(threads);
     cfg.clone_fd = true;
     cfg.mount_options = options;
