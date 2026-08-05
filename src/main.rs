@@ -59,6 +59,12 @@ fn main() {
                 .help("Number of threads for fuse operations (default: 8)"),
         )
         .arg(
+            Arg::new("daemon")
+                .long("daemon")
+                .action(ArgAction::SetTrue)
+                .help("Mount in the background"),
+        )
+        .arg(
             Arg::new("auto-unmount")
                 .long("auto-unmount")
                 .action(ArgAction::SetTrue)
@@ -67,13 +73,30 @@ fn main() {
         .get_matches();
 
     let connection_string = matches.get_one::<String>("conn");
-    let mountpoint = matches.get_one::<String>("MOUNT_POINT").unwrap();
+    let mountpoint_arg = matches.get_one::<String>("MOUNT_POINT").unwrap();
     let use_raw = !matches.get_flag("no-raw");
     let magic = !matches.get_flag("no-magic");
     let mirror = matches.get_one::<String>("mirror").map(|s| s.as_str()).unwrap_or("0");
     let mirror: u8 = mirror.parse().unwrap_or(0);
     let threads = matches.get_one::<String>("threads").unwrap();
     let threads: usize = threads.parse().unwrap_or(8);
+    let _daemon = matches.get_flag("daemon");
+
+    let mountpoint = match std::fs::canonicalize(mountpoint_arg) {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("Failed to resolve mountpoint '{}': {e}", mountpoint_arg);
+            std::process::exit(1);
+        }
+    };
+
+    let mountpoint_string = match mountpoint.to_str() {
+        Some(path) => path.to_owned(),
+        None => {
+            eprintln!("Mountpoint is not valid UTF-8: {}", mountpoint.display());
+            std::process::exit(1);
+        }
+    };
 
     let mut options = vec![MountOption::RO, MountOption::FSName("asmfs".to_string())];
     if matches.get_flag("auto-unmount") {
@@ -90,7 +113,7 @@ fn main() {
     cfg.clone_fd = true;
     cfg.mount_options = options;
 
-    let asmfs = match AsmFS::new(mountpoint.clone(), connection_string.cloned(), use_raw, magic, mirror) {
+    let asmfs = match AsmFS::new(mountpoint_string, connection_string.cloned(), use_raw, magic, mirror) {
         Ok(asmfs) => asmfs,
         Err(e) => {
             eprintln!("{e}");
