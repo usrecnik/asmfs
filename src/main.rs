@@ -1,3 +1,4 @@
+mod oraenv;
 mod oracle;
 mod fuse;
 mod inode;
@@ -8,8 +9,13 @@ use fuser::MountOption;
 use fuser::SessionACL;
 use fuser::Config;
 use fuse::AsmFS;
+use crate::oraenv::bootstrap_oracle_env;
 
 fn main() {
+    bootstrap_oracle_env(
+        &std::env::args_os().collect::<Vec<_>>(),
+    );
+
     env_logger::init();
 
     let matches = Command::new(env!("CARGO_PKG_NAME"))
