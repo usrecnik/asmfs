@@ -114,14 +114,27 @@ fn main() {
     let connection_string = matches.get_one::<String>("conn");
     let mountpoint_arg = matches.get_many::<String>("PATH_ARGS").unwrap();
     let mountpoint_arg = mountpoint_arg.last().unwrap(); // intentionally, because first argument is "dummy" when fstab is used.
-    let use_raw = !matches.get_flag("no-raw");
-    let magic = !matches.get_flag("no-magic");
+
+    let use_raw = !matches.get_flag("no-raw") && !mount_option_present(&mount_options, "no-raw");
+    let magic = !matches.get_flag("no-magic") && !mount_option_present(&mount_options, "no-magic");
     let mirror = matches.get_one::<String>("mirror").map(|s| s.as_str()).unwrap_or("0");
     let mirror: u8 = mirror.parse().unwrap_or(0);
+    let mirror = mount_option_int(&mount_options, "mirror", mirror).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(2);
+    });
     let threads = matches.get_one::<String>("threads").unwrap();
     let threads: usize = threads.parse().unwrap_or(8);
-    let daemon = matches.get_flag("daemon");
+    let threads: usize = mount_option_int(&mount_options, "threads", threads).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(2);
+    });
+    let daemon = matches.get_flag("daemon") || mount_option_present(&mount_options, "daemon");
     let log_file = matches.get_one::<String>("log-file");
+    let log_file = mount_option_string(&mount_options, "log-file", log_file.cloned()).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(2);
+    });
 
     let mountpoint = match std::fs::canonicalize(mountpoint_arg) {
         Ok(path) => path,
@@ -172,7 +185,7 @@ fn main() {
     };
 
     if status_pipe.is_some() {
-        let log_path = log_file.map(Path::new);
+        let log_path = log_file.as_deref().map(Path::new);
 
         if let Err(e) = redirect_daemon_stdio(log_path) {
             startup_failed(&mut status_pipe, &format!("Failed to redirect daemon standard streams: {e}"));
@@ -194,6 +207,48 @@ fn main() {
     }
 
 }
+
+fn mount_option_present(
+    options: &[(&str, Option<&str>)],
+    name: &str,
+) -> bool {
+    options.iter().any(|(key, _)| *key == name)
+}
+
+fn mount_option_int<T>(
+    options: &[(&str, Option<&str>)],
+    name: &str,
+    fallback: T,
+) -> Result<T, String>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    match options.iter().rev().find(|(key, _)| *key == name) {
+        None => Ok(fallback),
+        Some((_, None)) => {
+            Err(format!("mount option '{name}' requires a value"))
+        }
+        Some((_, Some(value))) => value
+            .parse::<T>()
+            .map_err(|e| format!("invalid value for mount option '{name}': {e}")),
+    }
+}
+
+fn mount_option_string(
+    options: &[(&str, Option<&str>)],
+    name: &str,
+    fallback: Option<String>,
+) -> Result<Option<String>, String> {
+    match options.iter().rev().find(|(key, _)| *key == name) {
+        None => Ok(fallback),
+        Some((_, None)) => {
+            Err(format!("mount option '{name}' requires a value"))
+        }
+        Some((_, Some(value))) => Ok(Some((*value).to_owned())),
+    }
+}
+
 /*
 --daemon needs two processes:
   - The parent waits only long enough to learn whether mounting succeeded, then exits.
