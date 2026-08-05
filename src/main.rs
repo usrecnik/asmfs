@@ -203,19 +203,6 @@ fn main() {
         }
     };
 
-    let mountpoint_string = match mountpoint.to_str() {
-        Some(path) => path.to_owned(),
-        None => {
-            eprintln!("Mountpoint is not valid UTF-8: {}", mountpoint.display());
-            std::process::exit(1);
-        }
-    };
-
-    let mut options = vec![MountOption::FSName("asmfs".to_string())];
-    if matches.get_flag("auto-unmount") || mount_option_present(&mount_options, "auto-unmount") || mount_option_present(&mount_options, "auto_unmount") {
-        options.push(MountOption::AutoUnmount);
-    }
-
     let allow_root = mount_option_present(&mount_options, "allow_root");
     let allow_other = mount_option_present(&mount_options, "allow_other");
 
@@ -231,6 +218,19 @@ fn main() {
 
     if matches.get_flag("fake") {
         return;
+    }
+
+    let mountpoint_string = match mountpoint.to_str() {
+        Some(path) => path.to_owned(),
+        None => {
+            eprintln!("Mountpoint is not valid UTF-8: {}", mountpoint.display());
+            std::process::exit(1);
+        }
+    };
+
+    let mut options = vec![MountOption::FSName("asmfs".to_string())];
+    if matches.get_flag("auto-unmount") || mount_option_present(&mount_options, "auto-unmount") || mount_option_present(&mount_options, "auto_unmount") {
+        options.push(MountOption::AutoUnmount);
     }
 
     options.push(MountOption::CUSTOM("max_read=33554432".into())); // 32MB max read
