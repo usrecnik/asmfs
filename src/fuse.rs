@@ -42,37 +42,24 @@ pub struct AsmFS {
 }
 
 impl AsmFS {
-    pub fn new(mut mount_point: String, connection_string: Option<String>, use_raw: bool, magic: bool, mirror: u8) -> Self {
+    pub fn new(mut mount_point: String, connection_string: Option<String>, use_raw: bool, magic: bool, mirror: u8) -> Result<Self, String> {
         if !mount_point.ends_with("/") {
             mount_point.push('/');
         }
 
         info!("Connecting to oracle...");
-        let ora = match OracleConnection::connect(connection_string.clone()) {
-            Ok(ora) => ora,
-            Err(e) => {
-                error!("Unable to connect to oracle: {}", e);
-                std::process::exit(1);
-            }
-        };
+        let ora = OracleConnection::connect(connection_string.clone())
+            .map_err(|e| format!("Unable to connect to oracle: {e}"))?;
 
-        let oracle_version: u32 = match ora.query_oracle_version() {
-            Ok(version) => version,
-            Err(e) => {
-                error!("Unable to query oracle major version: {}", e);
-                std::process::exit(1);
-            }
-        };
+        let oracle_version = ora
+            .query_oracle_version()
+            .map_err(|e| format!("Unable to query oracle major version: {e}"))?;
 
-        let fine_stripe_width = match ora.query_fine_stripe_width() {
-            Ok(stripe_size) => stripe_size,
-            Err(e) => {
-                error!("Unable to query oracle fine stripe width {}", e);
-                std::process::exit(1);
-            }
-        };
+        let fine_stripe_width = ora
+            .query_fine_stripe_width()
+            .map_err(|e| format!("Unable to query oracle fine stripe width: {e}"))?;
 
-        AsmFS {
+        Ok(AsmFS {
             ora: Mutex::new(ora),
             connection_string,
             mount_point,
@@ -82,7 +69,7 @@ impl AsmFS {
             mirror,
             magic,
             oracle_version,
-            fine_stripe_width }
+            fine_stripe_width })
     }
 }
 

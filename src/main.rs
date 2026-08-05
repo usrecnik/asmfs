@@ -90,7 +90,13 @@ fn main() {
     cfg.clone_fd = true;
     cfg.mount_options = options;
 
-    let asmfs = AsmFS::new(mountpoint.clone(), connection_string.cloned(), use_raw, magic, mirror);
+    let asmfs = match AsmFS::new(mountpoint.clone(), connection_string.cloned(), use_raw, magic, mirror) {
+        Ok(asmfs) => asmfs,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    };
 
     match fuser::mount2(asmfs, mountpoint, &cfg) {
         Ok(_) => {},
