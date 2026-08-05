@@ -111,9 +111,15 @@ fn main() {
         })
         .collect();
 
-    let connection_string = matches.get_one::<String>("conn");
+
     let mountpoint_arg = matches.get_many::<String>("PATH_ARGS").unwrap();
     let mountpoint_arg = mountpoint_arg.last().unwrap(); // intentionally, because first argument is "dummy" when fstab is used.
+
+    let connection_string = matches.get_one::<String>("conn");
+    let connection_string = mount_option_string(&mount_options, "conn", connection_string.cloned()).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(2);
+    });
 
     let use_raw = !matches.get_flag("no-raw") && !mount_option_present(&mount_options, "no-raw");
     let magic = !matches.get_flag("no-magic") && !mount_option_present(&mount_options, "no-magic");
@@ -136,6 +142,16 @@ fn main() {
         std::process::exit(2);
     });
 
+    if mount_option_present(&mount_options, "rw") {
+        eprintln!("asmfs is read-only; mount option 'rw' is not supported");
+        std::process::exit(2);
+    }
+
+    if mirror > 2 {
+        eprintln!("mirror must be 0, 1, or 2");
+        std::process::exit(2);
+    }
+    
     let mountpoint = match std::fs::canonicalize(mountpoint_arg) {
         Ok(path) => path,
         Err(e) => {
