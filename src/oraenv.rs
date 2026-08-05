@@ -41,13 +41,14 @@ pub(crate) fn bootstrap_oracle_env(args: &[OsString]) {
     };
 
     let lib_dir = home.join("lib");
-    let new_library_path = if existing_library_path.is_some() {
-        lib_dir.as_os_str().to_os_string()
-    } else {
-        let mut value = lib_dir.as_os_str().to_os_string();
-        value.push(":");
-        value.push(existing_library_path.as_ref().unwrap());
-        value
+    let new_library_path = match existing_library_path.as_ref() {
+        Some(existing) if !existing.is_empty() => {
+            let mut value = lib_dir.as_os_str().to_os_string();
+            value.push(":");
+            value.push(existing);
+            value
+        }
+        _ => lib_dir.as_os_str().to_os_string(),
     };
 
     // SAFETY: this function is called before logging, clap, FUSE, or any
@@ -58,7 +59,7 @@ pub(crate) fn bootstrap_oracle_env(args: &[OsString]) {
         env::set_var("LD_LIBRARY_PATH", new_library_path.clone());
         env::set_var(BOOTSTRAP_GUARD, "1");
     }
-
+    
     info!("Re-executing with:");
     info!("  ORACLE_SID={}", sid.to_string_lossy());
     info!("  ORACLE_HOME={}", home.display());
