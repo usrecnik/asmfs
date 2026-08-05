@@ -33,6 +33,13 @@ fn main() {
                 .help("Mount FUSE using <MOUNTPOINT> or <SPEC> <MOUNTPOINT>"), // SPEC is ignored, such syntax is supported only because of fstab compatibility.
         )
         .arg(
+            Arg::new("mount-options")
+                .short('o')
+                .value_name("OPTIONS")
+                .action(ArgAction::Append)
+                .help("Comma-separated mount options"),
+        )
+        .arg(
             Arg::new("conn")
                 .long("conn")
                 .value_name("CONNECTION_STRING")
@@ -83,6 +90,26 @@ fn main() {
                 .help("Automatically unmount on process exit"),
         )
         .get_matches();
+
+    /*
+     This produces from '-o ro,mirror=1 -o no-magic' something like:
+          [
+              ("ro", None),
+              ("mirror", Some("1")),
+              ("no-magic", None),
+          ]
+    */
+    let mount_options: Vec<(&str, Option<&str>)> = matches
+        .get_many::<String>("mount-options")
+        .into_iter()
+        .flatten()
+        .flat_map(|options| options.split(','))
+        .filter(|item| !item.is_empty())
+        .map(|item| match item.split_once('=') {
+            Some((key, value)) => (key, Some(value)),
+            None => (item, None),
+        })
+        .collect();
 
     let connection_string = matches.get_one::<String>("conn");
     let mountpoint_arg = matches.get_many::<String>("PATH_ARGS").unwrap();
