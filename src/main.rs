@@ -113,6 +113,7 @@ fn main() {
 
 
     let mountpoint_arg = matches.get_many::<String>("PATH_ARGS").unwrap();
+    let daemon = matches.get_flag("daemon") || mount_option_present(&mount_options, "daemon") || mountpoint_arg.len() >= 2;
     let mountpoint_arg = mountpoint_arg.last().unwrap(); // intentionally, because first argument is "dummy" when fstab is used.
 
     let connection_string = matches.get_one::<String>("conn");
@@ -135,7 +136,7 @@ fn main() {
         eprintln!("{e}");
         std::process::exit(2);
     });
-    let daemon = matches.get_flag("daemon") || mount_option_present(&mount_options, "daemon");
+
     let log_file = matches.get_one::<String>("log-file");
     let log_file = mount_option_string(&mount_options, "log-file", log_file.cloned()).unwrap_or_else(|e| {
         eprintln!("{e}");
@@ -151,7 +152,7 @@ fn main() {
         eprintln!("mirror must be 0, 1, or 2");
         std::process::exit(2);
     }
-    
+
     let mountpoint = match std::fs::canonicalize(mountpoint_arg) {
         Ok(path) => path,
         Err(e) => {
