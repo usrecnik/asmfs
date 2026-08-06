@@ -76,26 +76,43 @@ impl AsmFS {
 impl Filesystem for AsmFS {
 
     fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
-        let name_str = name.to_str().expect("unable to convert OsStr to str");
+        info!("lookup(parent={}, name={:?})", parent, name);
 
-        info!("lookup(parent={}, name={})", parent, name_str);
-
-        let contents: Result<FileAttr, Error>;
-
-        if parent.0 == 1 {
-            contents = self.ora.lock().unwrap().query_asm_diskgroup_ent_name(&name_str);
+        let contents: Result<FileAttr, Error> = if name == OsStr::new(".") {
+            self.resolve_node_attr(parent)
+        } else if name == OsStr::new("..") {
+            self.resolve_parent_ino(parent)
+                .and_then(|parent_ino| self.resolve_node_attr(parent_ino))
         } else {
-            contents = self.ora.lock().unwrap().query_asm_alias_ent(parent.0, &name_str);
-        }
+            let name_str = match name.to_str() {
+                Some(name) => name,
+                None => {
+                    error!("lookup(parent={}, name={:?}) failed: name is not valid UTF-8", parent, name);
+                    reply.error(Errno::ENOENT);
+                    return;
+                }
+            };
+
+            if parent.0 == 1 {
+                self.ora
+                    .lock()
+                    .unwrap()
+                    .query_asm_diskgroup_ent_name(name_str)
+            } else {
+                self.ora
+                    .lock()
+                    .unwrap()
+                    .query_asm_alias_ent(parent.0, name_str)
+            }
+        };
 
         match contents {
             Ok(attr) => {
-                debug!(".. lookup() ok");
+                debug!("lookup(parent={}, name={:?}) succeeded: ino={}", parent, name, attr.ino);
                 reply.entry(&TTL, &attr, Generation(0));
-                return;
-            },
+            }
             Err(e) => {
-                error!(".. lookup() failed: {}", e);
+                error!("lookup(parent={}, name={:?}) failed: {}", parent, name, e);
                 reply.error(Errno::ENOENT);
             }
         }
@@ -210,31 +227,63 @@ impl Filesystem for AsmFS {
     }
 
     fn readdir(&self, _req: &Request, ino: INodeNo, _fh: FileHandle, offset: u64, mut reply: ReplyDirectory) {
+        info!("readdir(ino={}, offset={}, fh={})", ino, offset, _fh);
 
-        info!("readdir(ino={}, offset={}, _fh={})", ino, offset, _fh);
-        let contents: Result<Vec<(u64, FileType, String)>, Error>;
+        let attr = match self.resolve_node_attr(ino) {
+            Ok(attr) => attr,
+            Err(e) => {
+                error!("readdir(ino={}) failed to resolve inode: {}", ino, e);
+                reply.error(Errno::ENOENT);
+                return;
+            }
+        };
 
-        if ino.0 == 1 {
-            debug!(".. readdir() ok");
-            contents = self.ora.lock().unwrap().query_asm_diskgroup_vec();
-        } else {
-            debug!(".. readdir() failed: {}", ino);
-            contents = self.ora.lock().unwrap().query_asm_alias_vec(ino.0);
+        if attr.kind != FileType::Directory {
+            reply.error(Errno::ENOTDIR);
+            return;
         }
 
-        match contents {
-            Ok(dg_vec) => {
-                for (i, entry) in dg_vec.into_iter().enumerate().skip(offset as usize) {
-
-                    if reply.add(INodeNo(entry.0), (i + 1) as u64, entry.1, entry.2) {
-                        break;
-                    }
-                }
-            }
+        let parent_ino = match self.resolve_parent_ino(ino) {
+            Ok(parent_ino) => parent_ino,
             Err(e) => {
-                error!("readdir() failed: {}", e);
-                //reply.error(ENOENT);
+                error!("readdir(ino={}) failed to resolve parent: {}", ino, e);
+                reply.error(Errno::ENOENT);
                 return;
+            }
+        };
+
+        let contents: Result<Vec<(u64, FileType, String)>, Error> =
+            if ino.0 == 1 {
+                self.ora
+                    .lock()
+                    .unwrap()
+                    .query_asm_diskgroup_vec()
+            } else {
+                self.ora
+                    .lock()
+                    .unwrap()
+                    .query_asm_alias_vec(ino.0)
+            };
+
+        let children = match contents {
+            Ok(children) => children,
+            Err(e) => {
+                error!("readdir(ino={}) failed to list children: {}", ino, e);
+                reply.error(Errno::ENOENT);
+                return;
+            }
+        };
+
+        let mut entries = Vec::with_capacity(children.len() + 2);
+
+        entries.push((ino.0, FileType::Directory, ".".to_string()));
+        entries.push((parent_ino.0, FileType::Directory, "..".to_string()));
+        entries.extend(children);
+
+        // Still positional for this intermediate step.
+        for (index, entry) in entries.into_iter().enumerate().skip(offset as usize) {
+            if reply.add(INodeNo(entry.0), (index + 1) as u64, entry.1, entry.2) {
+                break;
             }
         }
 
@@ -243,7 +292,7 @@ impl Filesystem for AsmFS {
 }
 
 impl AsmFS {
-    fn _resolve_node_attr(&self, ino: INodeNo) -> Result<FileAttr, Error> {
+    fn resolve_node_attr(&self, ino: INodeNo) -> Result<FileAttr, Error> {
         if ino.0 == 1 {
             // root:
             return Ok(FileAttr {
@@ -271,6 +320,28 @@ impl AsmFS {
             ora.query_asm_diskgroup_ent_ino(ino.0)
         } else {
             ora.query_asm_alias_ent_ino(ino.0)
+        }
+    }
+
+    fn resolve_parent_ino(&self, ino: INodeNo) -> Result<INodeNo, Error> {
+        if ino.0 == 1 {
+            return Ok(INodeNo(1));
+        }
+
+        let inode = Inode::from_ino(ino.0);
+
+        if inode.is_disk_group() {
+            // Validate that this is an existing disk group, not merely a correctly shaped inode.
+            self.resolve_node_attr(ino)?;
+            Ok(INodeNo(1))
+        } else {
+            let parent_ino = self
+                .ora
+                .lock()
+                .unwrap()
+                .query_asm_alias_parent_ino(ino.0)?;
+
+            Ok(INodeNo(parent_ino))
         }
     }
 

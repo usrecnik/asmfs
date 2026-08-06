@@ -18,7 +18,7 @@ pub struct OracleConnection {
     conn: Connection
 }
 
-const ASM_ALIAS_COLUMNS: &str = "a.reference_index, a.alias_index, a.file_number, a.name, a.alias_directory, a.system_created";
+const ASM_ALIAS_COLUMNS: &str = "a.reference_index, a.alias_index, a.file_number, a.name, a.alias_directory, a.system_created, a.parent_index";
 const ASM_FILE_COLUMNS: &str = "f.bytes, f.blocks, f.creation_date, f.modification_date, f.type, f.striped";
 
 pub const ASM_STRIPED_COARSE :u8 = 0;
@@ -48,6 +48,7 @@ pub struct RawOpenFileHandle {
 struct AsmAlias {
     reference_index: u32,                   // v$asm_alias.reference_index (contains group_number in high-order 8 bits), use get_inode.get_group_number
     alias_index: u32,                       // v$asm_alias.alias_index
+    parent_index: u32,                      // v$asm_alias.parent_index
     file_number: u32,                       // v$asm_alias.file_number
     name: String,                           // v$asm_alias.name
     alias_directory: String,                // v$asm_alias.alias_directory ("Y" | "N")
@@ -66,6 +67,7 @@ impl AsmAlias {
         Ok(Self {
             reference_index: row.get("REFERENCE_INDEX")?,
             alias_index: row.get("ALIAS_INDEX")?,
+            parent_index: row.get("PARENT_INDEX")?,
             file_number: row.get("FILE_NUMBER")?,
             name: row.get("NAME")?,
             alias_directory: row.get("ALIAS_DIRECTORY")?,
@@ -81,6 +83,7 @@ impl AsmAlias {
         Ok(Self {
             reference_index: row.get("REFERENCE_INDEX")?,
             alias_index: row.get("ALIAS_INDEX")?,
+            parent_index: row.get("PARENT_INDEX")?,
             file_number: row.get("FILE_NUMBER")?,
             name: row.get("NAME")?,
             alias_directory: row.get("ALIAS_DIRECTORY")?,
@@ -250,6 +253,18 @@ impl OracleConnection {
         self.conn.query_row(query.as_str(), &[&reference_index, &alias_index])
     }
 
+    fn select_alias_directory_by_reference_index(&self, reference_index: u32) -> Result<Row, Error> {
+        let query = format!(
+            r#"
+              select {}
+              from v$asm_alias a
+              where a.reference_index = :1
+                and a.alias_directory = 'Y'
+          "#, ASM_ALIAS_COLUMNS);
+
+        self.conn.query_row(query.as_str(), &[&reference_index])
+    }
+
     fn select_extent_map(&self, group_number: u8, file_number: u32, mirror: u8) -> Result<ResultSet<'_,Row>, Error> {
         let query = r#"
             SELECT
@@ -330,6 +345,17 @@ impl OracleConnection {
         Ok(stripe_count)
     }
 
+    fn query_asm_alias_by_ino(&self, ino: u64) -> Result<AsmAlias, Error> {
+        let inode = Inode::from_ino(ino);
+
+        let row = self.select_alias_file_by_reference_index_and_alias_index(
+            inode.get_reference_index(),
+            inode.get_alias_index(),
+        )?;
+
+        AsmAlias::from_row_file(&row)
+    }
+
     pub fn query_fine_stripe_width(&self) -> Result<u32, Error> {
         let rs = self.select_fine_stripe_width()?;
         let stripe_width :String = rs.get("STRIPE_SIZE")?;
@@ -383,8 +409,6 @@ impl OracleConnection {
     pub fn query_asm_diskgroup_vec(&self) -> Result<Vec<(u64, FileType, String)>, Error> {
         let rs = self.select_diskgroup_all()?;
         let mut retval :Vec<(u64, FileType, String)> = Vec::new();
-        retval.push((1, FileType::Directory, ".".to_string()));
-        retval.push((1, FileType::Directory, "..".to_string()));
         for r in rs {
             let row = r?;
             let group_number: u8 = row.get(0)?;
@@ -480,11 +504,29 @@ impl OracleConnection {
     }
 
     pub fn query_asm_alias_ent_ino(&self, ino: u64) -> Result<FileAttr, Error> {
-        let inode = Inode::from_ino(ino);
-        let row = self.select_alias_file_by_reference_index_and_alias_index(inode.get_reference_index(), inode.get_alias_index())?;
-
-        let alias = AsmAlias::from_row_file(&row)?;
+        let alias = self.query_asm_alias_by_ino(ino)?;
         Ok(alias.get_file_attr())
+    }
+
+    pub fn query_asm_alias_parent_ino(&self, ino: u64) -> Result<u64, Error> {
+        let alias = self.query_asm_alias_by_ino(ino)?;
+        let parent_reference_index = alias.parent_index;
+
+        // A zero entry-number component identifies the disk-group root.
+        if parent_reference_index & 0x00ff_ffff == 0 {
+            let group_number = (parent_reference_index >> 24) as u8;
+            return Ok(
+                Inode::from_group_number(group_number).get_ino()
+            );
+        }
+
+        let parent_row = self.select_alias_directory_by_reference_index(
+            parent_reference_index,
+        )?;
+
+        let parent_alias = AsmAlias::from_row_alias(&parent_row)?;
+
+        Ok(parent_alias.get_inode().get_ino())
     }
 
     pub fn query_asm_alias_link(&self, ino: u64) -> Result<String, Error> {
