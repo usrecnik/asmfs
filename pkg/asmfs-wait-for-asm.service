@@ -1,0 +1,7 @@
+[Unit]
+Description=Wait for Oracle ASM before mounting ASMFS
+
+[Service]
+Type=oneshot
+ExecStart=/opt/asmfs/asmfs-wait-for-asm.sh
+TimeoutStartSec=30min
