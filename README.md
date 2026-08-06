@@ -101,6 +101,17 @@ This project is **experimental**, not well-tested, and still under development.
 
 **Contributions are welcome!** Ideas, issues, and pull requests are appreciated.
 
+# Intended Usage
+
+ASMFS is intended for **quiescent** ASM files. Those are files that are not being modified or actively used by a database.
+ASMFS can read live database files without modifying or corrupting them because it is read-only, but the resulting data
+may be inconsistent because different blocks can be read at different points in time.
+
+ASMFS derives inode numbers from `REFERENCE_INDEX` and `ALIAS_INDEX`; `GROUP_NUMBER` is embedded in `REFERENCE_INDEX`.
+ASM incarnation fields are _not_ part of this identity. ASMFS assumes that group numbers and the ASM namespace remain
+stable while mounted (newly created files do appear while mounted, including new archived logs). If a disk-group remount 
+or ASM restart changes group numbers, ASMFS must be remounted; NFS clients must also unmount and remount the export in this case.
+
 ## Screenshot (demo)
 
 ![asmfs demo](https://github.com/usrecnik/asmfs/blob/main/doc/asmfs_screenshot.png?raw=true)
