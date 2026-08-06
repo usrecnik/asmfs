@@ -101,7 +101,7 @@ This project is **experimental**, not well-tested, and still under development.
 
 **Contributions are welcome!** Ideas, issues, and pull requests are appreciated.
 
-# Intended Usage
+## Intended Usage
 
 ASMFS is intended for **quiescent** ASM files. Those are files that are not being modified or actively used by a database.
 ASMFS can read live database files without modifying or corrupting them because it is read-only, but the resulting data
