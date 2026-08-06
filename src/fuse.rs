@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use log::{debug, info, error}; // debug
 use crate::oracle::{OracleConnection, RawOpenFileHandle, fix_header_block, ASM_STRIPED_COARSE, ASM_STRIPED_FINE, MAGIC_FILE_TYPES};
 use oracle::{Error};
-
+use crate::inode::Inode;
 
 const TTL: Duration = Duration::from_secs(60); // 1 minute
 
@@ -125,18 +125,20 @@ impl Filesystem for AsmFS {
             };
             return reply.attr(&TTL, &root);
 
-        } else if ino.0 < 2000 {
-            return reply.attr(&TTL, &self.ora.lock().unwrap().query_asm_diskgroup_ent_ino(ino.0));
         } else {
-            let tmp = match self.ora.lock().unwrap().query_asm_alias_ent_ino(ino.0) {
-                Ok(entry) => entry,
-                Err(e) => {
-                    error!("query asm$alias failed: {}", e);
-                    return reply.error(Errno::ENOENT);
-                }
-            };
-
-            return reply.attr(&TTL, &tmp);
+            let inode = Inode::from_ino(ino.0);
+            if inode.is_disk_group() {
+                reply.attr(&TTL, &self.ora.lock().unwrap().query_asm_diskgroup_ent_ino(ino.0))
+            } else {
+                let tmp = match self.ora.lock().unwrap().query_asm_alias_ent_ino(ino.0) {
+                    Ok(entry) => entry,
+                    Err(e) => {
+                        error!("query asm$alias failed: {}", e);
+                        return reply.error(Errno::ENOENT);
+                    }
+                };
+                reply.attr(&TTL, &tmp)
+            }
         }
     }
 

@@ -56,7 +56,7 @@ impl Inode {
         self.0
     }
 
-    pub fn _is_disk_group(&self) -> bool {
+    pub fn is_disk_group(&self) -> bool {
         self.get_alias_index() == ALIAS_FOR_DG && self._get_entry_number() == ENTRY_ROOT
     }
 
@@ -64,7 +64,7 @@ impl Inode {
     pub fn _debug_dump(&self) {
         println!("Inode {} -> group_number: {}, reference_index={}/{:X}, alias_index={:X}, entry_number={:X}, is_diskgroup={}", self.0, self.get_group_number(),
                  self.get_reference_index(), self.get_reference_index(),
-                 self.get_alias_index(), self._get_entry_number(), self._is_disk_group());
+                 self.get_alias_index(), self._get_entry_number(), self.is_disk_group());
     }
 
 }
