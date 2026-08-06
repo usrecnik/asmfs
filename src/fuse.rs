@@ -246,7 +246,10 @@ impl Filesystem for AsmFS {
         entries.push((parent_ino.0, FileType::Directory, "..".to_string()));
         entries.extend(children);
 
-        // Still positional for this intermediate step.
+        // Positional offsets are valid while the directory contents remain unchanged.
+        // If new entries appear between continuation calls for one enumeration, entries
+        // may be duplicated or omitted. This is allowed by the ASMFS contract. A fresh
+        // enumeration starting at offset 0 sees the current directory contents.
         for (index, entry) in entries.into_iter().enumerate().skip(offset as usize) {
             if reply.add(INodeNo(entry.0), (index + 1) as u64, entry.1, entry.2) {
                 break;
