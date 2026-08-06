@@ -31,7 +31,7 @@ do
         -w "/opt/asmfs-src" \
         $l_dist \
         bash -c "
-            dnf --refresh update && dnf install -y gcc make curl fuse3-devel rpm-build &&
+            dnf --refresh update && dnf install -y gcc make curl fuse3-devel rpm-build systemd-rpm-macros &&
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y &&
             source ~/.cargo/env &&
             cargo clean && 
