@@ -1,4 +1,4 @@
-use fuser::{Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation, INodeNo, LockOwner, OpenFlags, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, Request};
+use fuser::{Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation, INodeNo, InitFlags, KernelConfig, LockOwner, OpenFlags, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, Request};
 use std::ffi::OsStr;
 use std::collections::HashMap;
 use std::time::{Duration, UNIX_EPOCH};
@@ -74,6 +74,20 @@ impl AsmFS {
 }
 
 impl Filesystem for AsmFS {
+
+    fn init(&mut self, _req: &Request, config: &mut KernelConfig) -> std::io::Result<()> {
+        config
+            .add_capabilities(InitFlags::FUSE_EXPORT_SUPPORT)
+            .map_err(|unsupported| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    format!("kernel does not support required FUSE capability: {:?}", unsupported)
+                )
+            })?;
+
+        info!("FUSE export support enabled; kernel ABI: {:?}", config.kernel_abi());
+        Ok(())
+    }
 
     fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
         info!("lookup(parent={}, name={:?})", parent, name);
