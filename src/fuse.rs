@@ -128,7 +128,14 @@ impl Filesystem for AsmFS {
         } else {
             let inode = Inode::from_ino(ino.0);
             if inode.is_disk_group() {
-                reply.attr(&TTL, &self.ora.lock().unwrap().query_asm_diskgroup_ent_ino(ino.0))
+                let tmp = match self.ora.lock().unwrap().query_asm_diskgroup_ent_ino(ino.0) {
+                    Ok(entry) => entry,
+                    Err(e) => {
+                        error!("query asm$diskgroup failed: {}", e);
+                        return reply.error(Errno::ENOENT);
+                    }
+                };
+                reply.attr(&TTL, &tmp)
             } else {
                 let tmp = match self.ora.lock().unwrap().query_asm_alias_ent_ino(ino.0) {
                     Ok(entry) => entry,
@@ -236,6 +243,37 @@ impl Filesystem for AsmFS {
 }
 
 impl AsmFS {
+    fn _resolve_node_attr(&self, ino: INodeNo) -> Result<FileAttr, Error> {
+        if ino.0 == 1 {
+            // root:
+            return Ok(FileAttr {
+                ino: INodeNo(1),
+                size: 0,
+                blocks: 0,
+                atime: UNIX_EPOCH,
+                mtime: UNIX_EPOCH,
+                ctime: UNIX_EPOCH,
+                crtime: UNIX_EPOCH,
+                kind: FileType::Directory,
+                perm: 0o755,
+                nlink: 2,
+                uid: 0,
+                gid: 0,
+                rdev: 0,
+                flags: 0,
+                blksize: 512});
+        }
+
+        let inode = Inode::from_ino(ino.0);
+        let ora = self.ora.lock()?;
+
+        if inode.is_disk_group() {
+            ora.query_asm_diskgroup_ent_ino(ino.0)
+        } else {
+            ora.query_asm_alias_ent_ino(ino.0)
+        }
+    }
+
     fn open_dbms(&self, _req: &Request, ino: u64, _flags: OpenFlags, reply: ReplyOpen) {
         // each call to open() establishes new connection
         let conn = match OracleConnection::connect(self.connection_string.clone()) {

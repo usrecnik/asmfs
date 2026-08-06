@@ -207,6 +207,15 @@ impl OracleConnection {
         self.conn.query_row(query, &[&group_name])
     }
 
+    fn select_diskgroup_by_number(&self, group_number: u8) -> Result<Row, Error> {
+        let query = r#"
+          select group_number
+          from v$asm_diskgroup
+          where group_number = :1
+        "#;
+        self.conn.query_row(query, &[&group_number])
+    }
+
     fn select_alias_by_parent_index(&self, parent_index: u32) -> Result<ResultSet<'_,Row>, Error> {
         let query = format!(r#"
             select {}
@@ -420,8 +429,13 @@ impl OracleConnection {
         })
     }
 
-    pub fn query_asm_diskgroup_ent_ino(&mut self, ino: u64) -> FileAttr {
-        FileAttr {
+    pub fn query_asm_diskgroup_ent_ino(&self, ino: u64) -> Result<FileAttr, Error> {
+        let inode = Inode::from_ino(ino);
+
+        // Query success proves that the encoded group is currently mounted.
+        self.select_diskgroup_by_number(inode.get_group_number())?;
+
+        Ok(FileAttr {
             ino: INodeNo(ino),
             size: 0,
             blocks: 0,
@@ -437,7 +451,7 @@ impl OracleConnection {
             rdev: 0,
             flags: 0,
             blksize: 512,
-        }
+        })
     }
 
     // all aliases in a given folder
