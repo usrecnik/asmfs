@@ -119,49 +119,15 @@ impl Filesystem for AsmFS {
     }
 
     fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
-
         info!("getattr(ino={})", ino);
 
-        if ino.0 == 1 {
-            let root = FileAttr {
-                ino: INodeNo(1),
-                size: 0,
-                blocks: 0,
-                atime: UNIX_EPOCH,
-                mtime: UNIX_EPOCH,
-                ctime: UNIX_EPOCH,
-                crtime: UNIX_EPOCH,
-                kind: FileType::Directory,
-                perm: 0o755,
-                nlink: 2,
-                uid: 0,
-                gid: 0,
-                rdev: 0,
-                flags: 0,
-                blksize: 512,
-            };
-            return reply.attr(&TTL, &root);
-
-        } else {
-            let inode = Inode::from_ino(ino.0);
-            if inode.is_disk_group() {
-                let tmp = match self.ora.lock().unwrap().query_asm_diskgroup_ent_ino(ino.0) {
-                    Ok(entry) => entry,
-                    Err(e) => {
-                        error!("query asm$diskgroup failed: {}", e);
-                        return reply.error(Errno::ENOENT);
-                    }
-                };
-                reply.attr(&TTL, &tmp)
-            } else {
-                let tmp = match self.ora.lock().unwrap().query_asm_alias_ent_ino(ino.0) {
-                    Ok(entry) => entry,
-                    Err(e) => {
-                        error!("query asm$alias failed: {}", e);
-                        return reply.error(Errno::ENOENT);
-                    }
-                };
-                reply.attr(&TTL, &tmp)
+        match self.resolve_node_attr(ino) {
+            Ok(attr) => {
+                reply.attr(&TTL, &attr);
+            }
+            Err(e) => {
+                error!("getattr(ino={}) failed: {}", ino, e);
+                reply.error(Errno::ENOENT);
             }
         }
     }
