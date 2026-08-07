@@ -567,23 +567,6 @@ impl OracleConnection {
         Ok((filetype, filesize, filesize, blksize))
     }
 
-    pub fn _proc_copy(&self, src_fname: String, src_filetype: u32, src_blksize: u32, src_filesize: u64, dst_fname: String) -> Result<(), Error> {
-        let sql = "begin dbms_diskgroup.copy('', '', '', :src_path, :src_ftyp, :src_blksz, :src_fsiz, '', '', '', :dst_path, 1, 0, 0, 0, '', ''); end;";
-        let mut stmt = self.conn.statement(sql).build()?;
-
-        info!("Calling dbms_diskgroup.copy now...");
-        stmt.execute(&[
-            &src_fname,
-            &src_filetype,
-            &src_blksize,
-            &src_filesize,
-            &dst_fname
-        ])?;
-        info!("Calling dbms_diskgroup.copy completed.");
-
-        Ok(())
-    }
-
     pub fn proc_open(&self, ino: u64) -> Result<(u64, u32, u64, u64, u32), Error> {
         let target_path = self.query_asm_alias_link(ino)?;
 
