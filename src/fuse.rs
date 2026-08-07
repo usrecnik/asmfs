@@ -1,4 +1,4 @@
-use fuser::{Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation, INodeNo, InitFlags, KernelConfig, LockOwner, OpenFlags, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, Request};
+use fuser::{Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation, INodeNo, InitFlags, KernelConfig, LockOwner, OpenFlags, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyXattr, Request};
 use std::ffi::OsStr;
 use std::collections::HashMap;
 use std::time::{Duration, UNIX_EPOCH};
@@ -272,6 +272,31 @@ impl Filesystem for AsmFS {
 
         reply.ok();
     }
+
+    fn getxattr(&self, _req: &Request, _ino: INodeNo, _name: &OsStr, _size: u32, reply: ReplyXattr) {
+        // ASMFS has no extended attributes; but NFSv4.2 expects this to be implemented.
+        reply.error(Errno::ENODATA);
+    }
+
+    fn listxattr(&self, _req: &Request, _ino: INodeNo, size: u32, reply: ReplyXattr) {
+        // ASMFS has no extended attributes; but NFSv4.2 expects this to be implemented.
+        if size == 0 {
+            reply.size(0);  // Size-query response: required buffer length is zero.
+        } else {
+            reply.data(&[]); // Data response: the list contains zero bytes.
+        }
+    }
+
+    fn setxattr(&self, _req: &Request, _ino: INodeNo, _name: &OsStr, _value: &[u8], _flags: i32, _position: u32, reply: ReplyEmpty) {
+        // ASMFS has no extended attributes; but NFSv4.2 expects this to be implemented. (ASMFS is read-only)
+        reply.error(Errno::EROFS);
+    }
+
+    fn removexattr(&self, _req: &Request, _ino: INodeNo, _name: &OsStr, reply: ReplyEmpty) {
+        // ASMFS has no extended attributes; but NFSv4.2 expects this to be implemented. (ASMFS is read-only)
+        reply.error(Errno::EROFS);
+    }
+    
 }
 
 impl AsmFS {
