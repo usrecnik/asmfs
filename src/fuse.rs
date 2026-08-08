@@ -37,12 +37,14 @@ pub struct AsmFS {
     use_raw: bool,  // read only after init
     mirror: u8,     // read only after init
     magic: bool,    // read only after init
+    owner_uid: u32, // read only after init
+    owner_gid: u32, // read only after init
     oracle_version: u32, // only written in constructor
     fine_stripe_width: u32  // only written in constructor
 }
 
 impl AsmFS {
-    pub fn new(mut mount_point: String, connection_string: Option<String>, use_raw: bool, magic: bool, mirror: u8) -> Result<Self, String> {
+    pub fn new(mut mount_point: String, connection_string: Option<String>, use_raw: bool, magic: bool, mirror: u8, owner_uid: u32, owner_gid: u32) -> Result<Self, String> {
         if !mount_point.ends_with("/") {
             mount_point.push('/');
         }
@@ -68,8 +70,16 @@ impl AsmFS {
             use_raw,
             mirror,
             magic,
+            owner_uid,
+            owner_gid,
             oracle_version,
             fine_stripe_width })
+    }
+
+    fn with_configured_owner(&self, mut attr: FileAttr) -> FileAttr {
+        attr.uid = self.owner_uid;
+        attr.gid = self.owner_gid;
+        attr
     }
 }
 
@@ -119,6 +129,10 @@ impl Filesystem for AsmFS {
                     .query_asm_alias_ent(parent.0, name_str)
             }
         };
+
+        // Change the ownership only when lookup succeeded.
+        // Any Error value passes through unchanged.
+        let contents = contents.map(|attr| self.with_configured_owner(attr));
 
         match contents {
             Ok(attr) => {
@@ -314,8 +328,8 @@ impl AsmFS {
                 kind: FileType::Directory,
                 perm: 0o755,
                 nlink: 2,
-                uid: 0,
-                gid: 0,
+                uid: self.owner_uid,
+                gid: self.owner_gid,
                 rdev: 0,
                 flags: 0,
                 blksize: 512});

@@ -89,6 +89,24 @@ fn main() {
                 .action(ArgAction::SetTrue)
                 .help("Automatically unmount on process exit"),
         )
+        .arg(
+            Arg::new("uid")
+                .long("uid")
+                .value_name("UID")
+                .value_parser(clap::value_parser!(u32))
+                .help(
+                    "UID reported as the owner of all filesystem entries \
+                        (default: effective UID of the asmfs process)"),
+        )
+        .arg(
+            Arg::new("gid")
+                .long("gid")
+                .value_name("GID")
+                .value_parser(clap::value_parser!(u32))
+                .help(
+                    "GID reported as the owner of all filesystem entries \
+                        (default: effective GID of the asmfs process)"),
+        )
         // mount(8) may pass following standard external-helper flags. Most are handled
         // upstream by mount or mount.fuse3; accepting them prevents clap from
         // rejecting valid helper invocations. In this interface, -f means fake
@@ -179,6 +197,21 @@ fn main() {
         std::process::exit(2);
     });
 
+    let effective_uid = unsafe { libc::geteuid() } as u32;
+    let effective_gid = unsafe { libc::getegid() } as u32;
+
+    let owner_uid = matches.get_one::<u32>("uid").copied().unwrap_or(effective_uid);
+    let owner_uid = mount_option_int(&mount_options, "uid", owner_uid).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(2);
+    });
+
+    let owner_gid = matches.get_one::<u32>("gid").copied().unwrap_or(effective_gid);
+    let owner_gid = mount_option_int(&mount_options, "gid", owner_gid).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(2);
+    });
+
     let log_file = matches.get_one::<String>("log-file");
     let log_file = mount_option_string(&mount_options, "log-file", log_file.cloned()).unwrap_or_else(|e| {
         eprintln!("{e}");
@@ -248,7 +281,7 @@ fn main() {
 
     let mut status_pipe = start_daemon(daemon);
 
-    let asmfs = match AsmFS::new(mountpoint_string, connection_string, use_raw, magic, mirror) {
+    let asmfs = match AsmFS::new(mountpoint_string, connection_string, use_raw, magic, mirror, owner_uid, owner_gid) {
         Ok(asmfs) => asmfs,
         Err(e) => startup_failed(&mut status_pipe, &e)
     };
