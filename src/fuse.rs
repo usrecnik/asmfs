@@ -343,7 +343,7 @@ impl AsmFS {
         } else {
             ora.query_asm_alias_ent_ino(ino.0)?
         };
-        
+
         Ok(self.with_configured_owner(attr))
     }
 
