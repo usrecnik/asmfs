@@ -25,9 +25,18 @@ Options:
       --no-raw                    Use DBMS_DISKGROUP.READ() instead of raw device access
       --mirror <mirror>           0=>primary copy, 1=>first redundant copy, 2=>second redundant copy [default: 0]
       --auto-unmount              Automatically unmount on process exit
+      --uid <UID>                 UID reported as the owner of all filesystem entries [default: effective UID of asmfs]
+      --gid <GID>                 GID reported as the owner of all filesystem entries [default: effective GID of asmfs]
+      --daemon                    Mount in the background
       --allow-root                Allow root user to access filesystem
   -h, --help                      Print help
   -V, --version                   Print version
+```
+
+Options may also be supplied in the comma-separated `-o` form, for example:
+
+```
+-o allow_other,uid=1000,gid=200,threads=8
 ```
 
 ## Two Modes
