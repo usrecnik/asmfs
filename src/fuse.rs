@@ -338,11 +338,13 @@ impl AsmFS {
         let inode = Inode::from_ino(ino.0);
         let ora = self.ora.lock()?;
 
-        if inode.is_disk_group() {
-            ora.query_asm_diskgroup_ent_ino(ino.0)
+        let attr = if inode.is_disk_group() {
+            ora.query_asm_diskgroup_ent_ino(ino.0)?
         } else {
-            ora.query_asm_alias_ent_ino(ino.0)
-        }
+            ora.query_asm_alias_ent_ino(ino.0)?
+        };
+        
+        Ok(self.with_configured_owner(attr))
     }
 
     fn resolve_parent_ino(&self, ino: INodeNo) -> Result<INodeNo, Error> {
