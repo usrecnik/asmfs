@@ -1,7 +1,7 @@
 use fuser::{Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation, INodeNo, InitFlags, KernelConfig, LockOwner, OpenFlags, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyXattr, Request};
 use std::ffi::OsStr;
 use std::collections::HashMap;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 use std::os::unix::fs::FileExt;
 use std::sync::{Arc, Mutex, RwLock};
 use log::{debug, info, error}; // debug
