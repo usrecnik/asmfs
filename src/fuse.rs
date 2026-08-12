@@ -1,7 +1,7 @@
 use fuser::{Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation, INodeNo, InitFlags, KernelConfig, LockOwner, OpenFlags, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyXattr, Request};
 use std::ffi::OsStr;
 use std::collections::HashMap;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::os::unix::fs::FileExt;
 use std::sync::{Arc, Mutex, RwLock};
 use log::{debug, info, error}; // debug
@@ -9,7 +9,9 @@ use crate::oracle::{OracleConnection, RawOpenFileHandle, fix_header_block, ASM_S
 use oracle::{Error};
 use crate::inode::Inode;
 
-const TTL: Duration = Duration::from_secs(60); // 1 minute
+
+const TTL: Duration = Duration::from_secs(60);  // 1 minute
+const TTL_DIR: Duration = Duration::from_secs(10); // 10 seconds
 
 struct OpenFileHandle {
     conn: OracleConnection,
@@ -137,7 +139,8 @@ impl Filesystem for AsmFS {
         match contents {
             Ok(attr) => {
                 debug!("lookup(parent={}, name={:?}) succeeded: ino={}", parent, name, attr.ino);
-                reply.entry(&TTL, &attr, Generation(0));
+                let ttl = if attr.kind == FileType::Directory { &TTL_DIR } else { &TTL };
+                reply.entry(ttl, &attr, Generation(0));
             }
             Err(e) => {
                 error!("lookup(parent={}, name={:?}) failed: {}", parent, name, e);
@@ -151,7 +154,8 @@ impl Filesystem for AsmFS {
 
         match self.resolve_node_attr(ino) {
             Ok(attr) => {
-                reply.attr(&TTL, &attr);
+                let ttl = if attr.kind == FileType::Directory { &TTL_DIR } else { &TTL };
+                reply.attr(ttl, &attr);
             }
             Err(e) => {
                 error!("getattr(ino={}) failed: {}", ino, e);
@@ -317,13 +321,14 @@ impl AsmFS {
     fn resolve_node_attr(&self, ino: INodeNo) -> Result<FileAttr, Error> {
         if ino.0 == 1 {
             // root:
+            let time = SystemTime::now().checked_sub(Duration::from_secs(10)).unwrap_or(UNIX_EPOCH);
             return Ok(FileAttr {
                 ino: INodeNo(1),
                 size: 0,
                 blocks: 0,
                 atime: UNIX_EPOCH,
-                mtime: UNIX_EPOCH,
-                ctime: UNIX_EPOCH,
+                mtime: time,
+                ctime: time,
                 crtime: UNIX_EPOCH,
                 kind: FileType::Directory,
                 perm: 0o755,

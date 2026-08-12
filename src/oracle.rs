@@ -1,4 +1,4 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use oracle::{Connection, Connector, Error, ErrorKind, Privilege, Row, ResultSet};
 use fuser::{FileType, FileAttr, INodeNo};
 use oracle::sql_type::{OracleType, Timestamp};
@@ -265,6 +265,18 @@ impl OracleConnection {
         self.conn.query_row(query.as_str(), &[&reference_index])
     }
 
+    fn select_dir_dates_by_reference_index(&self, reference_index: u32) -> Result<Row, Error> {
+        let query = r#"
+        select  nvl(max(f.creation_date),     sysdate - interval '10' second) as creation_date,
+                nvl(max(f.modification_date), sysdate - interval '10' second) as modification_date
+            from v$asm_alias a
+            join v$asm_file f on f.group_number = a.group_number
+                and f.file_number  = a.file_number
+                where a.parent_index = :1
+        "#;
+        self.conn.query_row(query, &[&reference_index])
+    }
+
     fn select_extent_map(&self, group_number: u8, file_number: u32, mirror: u8) -> Result<ResultSet<'_,Row>, Error> {
         let query = r#"
             SELECT
@@ -283,19 +295,6 @@ impl OracleConnection {
         // println!("group_number={}, file_number={}, mirror={}", group_number, file_number, mirror);
         self.conn.query(query, &[&group_number, &file_number, &mirror])
     }
-
-    /*fn select_fine_stripe_count(&self, group_number: u8, file_number: u32, mirror: u8) -> Result<ResultSet<'_,Row>, Error> {
-        let query = r#"
-            SELECT MAX(pxn_kffxp) + 1 AS fine_stripe_count
-                FROM x$kffxp
-                WHERE group_kffxp = :1
-                    AND number_kffxp = :2
-                    AND lxn_kffxp = :3
-                    AND xnum_kffxp != 2147483648
-        "#;
-        
-        self.conn.query(query, &[&group_number, &file_number, &mirror])
-    }*/
 
     fn select_fine_stripe_width(&self) -> Result<Row, Error> {
         let query = r#"
@@ -434,13 +433,14 @@ impl OracleConnection {
         let group_number: u8 = row.get(0)?;
         let inode = Inode::from_group_number(group_number);
 
+        let time = SystemTime::now().checked_sub(Duration::from_secs(10)).unwrap_or(UNIX_EPOCH);
         Ok(FileAttr {
             ino: INodeNo(inode.get_ino()),
             size: 0,
             blocks: 0,
             atime: UNIX_EPOCH,
-            mtime: UNIX_EPOCH,
-            ctime: UNIX_EPOCH,
+            mtime: time,
+            ctime: time,
             crtime: UNIX_EPOCH,
             kind: FileType::Directory,
             perm: 0o755,
@@ -458,14 +458,15 @@ impl OracleConnection {
 
         // Query success proves that the encoded group is currently mounted.
         self.select_diskgroup_by_number(inode.get_group_number())?;
+        let time = SystemTime::now().checked_sub(Duration::from_secs(10)).unwrap_or(UNIX_EPOCH);
 
         Ok(FileAttr {
             ino: INodeNo(ino),
             size: 0,
             blocks: 0,
             atime: UNIX_EPOCH,
-            mtime: UNIX_EPOCH,
-            ctime: UNIX_EPOCH,
+            mtime: time,
+            ctime: time,
             crtime: UNIX_EPOCH,
             kind: FileType::Directory,
             perm: 0o755,
@@ -494,17 +495,26 @@ impl OracleConnection {
         Ok(retval)
     }
 
+    fn with_dir_dates(&self, mut alias: AsmAlias) -> Result<AsmAlias, Error> {
+        if alias.alias_directory == "Y" {
+            let row = self.select_dir_dates_by_reference_index(alias.reference_index)?;
+            alias.creation_date     = row.get("CREATION_DATE")?;
+            alias.modification_date = row.get("MODIFICATION_DATE")?;
+        }
+        Ok(alias)
+    }
+
     pub fn query_asm_alias_ent(&self, parent_ino: u64, name: &str) -> Result<FileAttr, Error> {
         let parent_inode = Inode::from_ino(parent_ino);
         let row = self.select_alias_file_by_parent_index_and_name(parent_inode.get_reference_index(), name)?;
 
-        let alias = AsmAlias::from_row_file(&row)?;
+        let alias = self.with_dir_dates(AsmAlias::from_row_file(&row)?)?;
         info!("query_asm_alias_ent(name={}, size={})", name, alias.get_file_attr().size);
         Ok(alias.get_file_attr())
     }
 
     pub fn query_asm_alias_ent_ino(&self, ino: u64) -> Result<FileAttr, Error> {
-        let alias = self.query_asm_alias_by_ino(ino)?;
+        let alias = self.with_dir_dates(self.query_asm_alias_by_ino(ino)?)?;
         Ok(alias.get_file_attr())
     }
 
