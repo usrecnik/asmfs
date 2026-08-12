@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::os::unix::fs::FileExt;
 use std::sync::{Arc, Mutex, RwLock};
 use log::{debug, info, error}; // debug
-use crate::oracle::{OracleConnection, RawOpenFileHandle, fix_header_block, ASM_STRIPED_COARSE, ASM_STRIPED_FINE, MAGIC_FILE_TYPES};
+use crate::oracle::{OracleConnection, RawOpenFileHandle, fix_header_block, ASM_STRIPED_COARSE, ASM_STRIPED_FINE, MAGIC_FILE_TYPES, synthetic_dir_time};
 use oracle::{Error};
 use crate::inode::Inode;
 
@@ -321,7 +321,7 @@ impl AsmFS {
     fn resolve_node_attr(&self, ino: INodeNo) -> Result<FileAttr, Error> {
         if ino.0 == 1 {
             // root:
-            let time = SystemTime::now().checked_sub(Duration::from_secs(10)).unwrap_or(UNIX_EPOCH);
+            let time = synthetic_dir_time();
             return Ok(FileAttr {
                 ino: INodeNo(1),
                 size: 0,

@@ -112,18 +112,18 @@ impl AsmAlias {
     }
 
     fn get_creation_date(&self) -> SystemTime {
-        if self.creation_date.is_none() {
-            SystemTime::UNIX_EPOCH
-        } else {
-            oracle_timestamp_to_system_time(&self.creation_date.unwrap())
+        match self.creation_date {
+            Some(ts) => oracle_timestamp_to_system_time(&ts),
+            None if self.get_ftype() == FileType::Directory => synthetic_dir_time(),
+            None => UNIX_EPOCH,
         }
     }
 
     fn get_modification_date(&self) -> SystemTime {
-        if self.modification_date.is_none() {
-            SystemTime::UNIX_EPOCH
-        } else {
-            oracle_timestamp_to_system_time(&self.modification_date.unwrap())
+        match self.modification_date {
+            Some(ts) => oracle_timestamp_to_system_time(&ts),
+            None if self.get_ftype() == FileType::Directory => synthetic_dir_time(),
+            None => UNIX_EPOCH,
         }
     }
 
@@ -263,18 +263,6 @@ impl OracleConnection {
           "#, ASM_ALIAS_COLUMNS);
 
         self.conn.query_row(query.as_str(), &[&reference_index])
-    }
-
-    fn select_dir_dates_by_reference_index(&self, reference_index: u32) -> Result<Row, Error> {
-        let query = r#"
-        select  nvl(max(f.creation_date),     sysdate - interval '10' second) as creation_date,
-                nvl(max(f.modification_date), sysdate - interval '10' second) as modification_date
-            from v$asm_alias a
-            join v$asm_file f on f.group_number = a.group_number
-                and f.file_number  = a.file_number
-                where a.parent_index = :1
-        "#;
-        self.conn.query_row(query, &[&reference_index])
     }
 
     fn select_extent_map(&self, group_number: u8, file_number: u32, mirror: u8) -> Result<ResultSet<'_,Row>, Error> {
@@ -433,7 +421,7 @@ impl OracleConnection {
         let group_number: u8 = row.get(0)?;
         let inode = Inode::from_group_number(group_number);
 
-        let time = SystemTime::now().checked_sub(Duration::from_secs(10)).unwrap_or(UNIX_EPOCH);
+        let time = synthetic_dir_time();
         Ok(FileAttr {
             ino: INodeNo(inode.get_ino()),
             size: 0,
@@ -458,7 +446,7 @@ impl OracleConnection {
 
         // Query success proves that the encoded group is currently mounted.
         self.select_diskgroup_by_number(inode.get_group_number())?;
-        let time = SystemTime::now().checked_sub(Duration::from_secs(10)).unwrap_or(UNIX_EPOCH);
+        let time = synthetic_dir_time();
 
         Ok(FileAttr {
             ino: INodeNo(ino),
@@ -495,26 +483,18 @@ impl OracleConnection {
         Ok(retval)
     }
 
-    fn with_dir_dates(&self, mut alias: AsmAlias) -> Result<AsmAlias, Error> {
-        if alias.alias_directory == "Y" {
-            let row = self.select_dir_dates_by_reference_index(alias.reference_index)?;
-            alias.creation_date     = row.get("CREATION_DATE")?;
-            alias.modification_date = row.get("MODIFICATION_DATE")?;
-        }
-        Ok(alias)
-    }
-
     pub fn query_asm_alias_ent(&self, parent_ino: u64, name: &str) -> Result<FileAttr, Error> {
         let parent_inode = Inode::from_ino(parent_ino);
         let row = self.select_alias_file_by_parent_index_and_name(parent_inode.get_reference_index(), name)?;
 
-        let alias = self.with_dir_dates(AsmAlias::from_row_file(&row)?)?;
-        info!("query_asm_alias_ent(name={}, size={})", name, alias.get_file_attr().size);
-        Ok(alias.get_file_attr())
+        let alias = AsmAlias::from_row_file(&row)?;
+        let attr = alias.get_file_attr();
+        info!("query_asm_alias_ent(name={}, size={})", name, attr.size);
+        Ok(attr)
     }
 
     pub fn query_asm_alias_ent_ino(&self, ino: u64) -> Result<FileAttr, Error> {
-        let alias = self.with_dir_dates(self.query_asm_alias_by_ino(ino)?)?;
+        let alias = self.query_asm_alias_by_ino(ino)?;
         Ok(alias.get_file_attr())
     }
 
@@ -819,4 +799,18 @@ pub fn fix_header_block(buffer: &mut Vec<u8>, target_metadata: u32) -> Result<()
 
     buffer[0x20..0x24].copy_from_slice(&target_metadata.to_le_bytes());
     Ok(())
+}
+
+/// Timestamp for directories, which ASM does not date.
+///
+/// ASM records creation and modification times for files only, never for directories. A fixed
+/// value would freeze the NFS change attribute and clients would never re-issue readdir() for
+/// the directory, so this moves instead: it costs a re-read per revalidation, but it can never
+/// go stale. Backdated slightly so clock skew against a client cannot place a directory in the
+/// future. checked_sub() rather than `-` because SystemTime::now() panics on underflow, which
+/// a host started before its clock is synchronised would otherwise trigger.
+pub fn synthetic_dir_time() -> SystemTime {
+    SystemTime::now()
+        .checked_sub(Duration::from_secs(10))
+        .unwrap_or(UNIX_EPOCH)
 }
