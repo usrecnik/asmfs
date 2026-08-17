@@ -15,20 +15,24 @@ $ cargo build
 ## Help
 
 ```
-Usage: asmfs [OPTIONS] <MOUNT_POINT>
+Usage: asmfs [OPTIONS] <PATH_ARGS>...
 
 Arguments:
-  <MOUNT_POINT>  Act as a client, and mount FUSE at given path
+  <PATH_ARGS>...  Mount FUSE using <MOUNTPOINT> or <SPEC> <MOUNTPOINT>
 
 Options:
+  -o <OPTIONS>                    Comma-separated mount options
       --conn <CONNECTION_STRING>  Connection string to remote ASM instance - user/pass@host:port/service (user must have sysdba)
       --no-raw                    Use DBMS_DISKGROUP.READ() instead of raw device access
+      --no-magic                  Do not change magic bytes in first block of files (default: do change magic bytes)
       --mirror <mirror>           0=>primary copy, 1=>first redundant copy, 2=>second redundant copy [default: 0]
-      --auto-unmount              Automatically unmount on process exit
-      --uid <UID>                 UID reported as the owner of all filesystem entries [default: effective UID of asmfs]
-      --gid <GID>                 GID reported as the owner of all filesystem entries [default: effective GID of asmfs]
+      --threads <threads>         Number of threads for fuse operations (default: 8) [default: 8]
       --daemon                    Mount in the background
-      --allow-root                Allow root user to access filesystem
+      --log-file <PATH>           Write daemon stdout and stderr to this file
+      --auto-unmount              Automatically unmount on process exit
+      --uid <UID>                 UID reported as the owner of all filesystem entries (default: effective UID of the asmfs process)
+      --gid <GID>                 GID reported as the owner of all filesystem entries (default: effective GID of the asmfs process)
+  -f                              Validate arguments without mounting
   -h, --help                      Print help
   -V, --version                   Print version
 ```
