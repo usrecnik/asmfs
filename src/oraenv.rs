@@ -24,7 +24,7 @@ pub(crate) fn bootstrap_oracle_env(args: &[OsString]) {
         && existing_library_path.is_some()
     {
         // Everything was supplied manually. Do not inspect or validate it, just use it.
-        println!("Oracle environment already set (ORACLE_SID, ORACLE_HOME, LD_LIBRARY_PATH). Skipping bootstrap.");
+        // println!("Oracle environment already set (ORACLE_SID, ORACLE_HOME, LD_LIBRARY_PATH). Skipping bootstrap.");
         return;
     }
 
@@ -64,6 +64,8 @@ pub(crate) fn bootstrap_oracle_env(args: &[OsString]) {
     println!("  ORACLE_SID={}", sid.to_string_lossy());
     println!("  ORACLE_HOME={}", home.display());
     println!("  LD_LIBRARY_PATH={}", new_library_path.display());
+    println!("  (to avoid this message, set 'oraenv' by yourself before running asmfs binary)");
+    println!("   ");
 
     reexec(args);
 }
