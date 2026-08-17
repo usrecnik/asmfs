@@ -39,12 +39,22 @@ Options may also be supplied in the comma-separated `-o` form, for example:
 -o allow_other,uid=1000,gid=200,threads=8
 ```
 
-## Two Modes
+## How ASMFS reads ASM files
 
-There are two different implementations on how `asmfs` can read files from ASM:
+### Raw device access (default, recommended)
 
-* A raw access to block devices, which is the default and works as described here (link todo).
-* `dbms_diskgroup.read()` which is used only if you explicitly specify `--no-raw`. The limitations of this approach are described in [this blog post](https://blog.srecnik.info/asmfs-and-dbmsdiskgroupread)
+By default `asmfs` reads ASM extents directly from the block devices. This is the
+mode that is actually exercised and tested, and the only one you should use unless
+you have a specific reason not to. It works as described in [Reading Oracle ASM files directly using x$kffxp](https://blog.srecnik.info/reading-oracle-asm-files-directly-using-xkffxp).
+
+### `DBMS_DISKGROUP.READ()` (experimental, opt-in)
+
+Passing `--no-raw` switches to reading files through the `DBMS_DISKGROUP.READ()`
+PL/SQL API instead of raw devices. This mode is retained mainly as an experiment
+and as a fallback in case Oracle ever improves that package — it is slow, has
+notable limitations, and has received far less testing than raw mode.
+
+The limitations are described in [this blog post](https://blog.srecnik.info/asmfs-and-dbmsdiskgroupread).
 
 ## Installation
 
@@ -74,7 +84,13 @@ Run under `root` user (because otherwise AFD won't allow non-oracle I/O to ASM d
 
 (such `username` can be created on `+ASM` instance with `CREATE USER` syntax. Such user must also be granted at lease `SYSDBA` privilege.)
 
-### `dbms_diskgroup.read` locally
+### Experimental mode (`--no-raw`)
+
+> These examples use the `DBMS_DISKGROUP.READ()` path, which is experimental and
+> much less tested than raw mode — see
+> [`DBMS_DISKGROUP.READ()`](#dbms_diskgroupread-experimental-opt-in) above.
+
+#### Locally
 
 ```
 $ . oraenv
@@ -83,11 +99,12 @@ ORACLE_SID = [+ASM] ? +ASM
 $ /opt/asmfs/asmfs/asmfs --no-raw /mnt/asmfs/
 ```
 
-### `dbms_diskgroup.read` remotely
+#### Remotely
 
 ```
 $ /opt/asmfs/asmfs/asmfs --no-raw --conn user/pass@hostname:1521/+ASM /mnt/asmfs/
 ```
+
 ### Umounting
 
 ```
